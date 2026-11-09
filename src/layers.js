@@ -26,11 +26,6 @@ const cim = symbol => ({ type: "cim", data: { type: "CIMSymbolReference", symbol
 const fill = color => ({ type: "CIMPolygonSymbol", symbolLayers: [{ type: "CIMSolidFill", enable: true, color }] });
 const stroke = (width, color, extra = {}) => ({ type: "CIMSolidStroke", enable: true, width, color, capStyle: "Round", joinStyle: "Round", ...extra });
 const projLine = flat => { const o = []; for (let k = 0; k < flat.length; k += 2) o.push(project(flat[k], flat[k + 1])); return o; };
-const circle = (r, n = 24) => Array.from({ length: n + 1 }, (_, i) => [Math.cos(i / n * 2 * Math.PI) * r[0], Math.sin(i / n * 2 * Math.PI) * (r[1] ?? r[0])]);
-const ellipse = (cx, cy, rx, ry, rot = 0, n = 20) => Array.from({ length: n + 1 }, (_, i) => {
-  const a = i / n * 2 * Math.PI, x = Math.cos(a) * rx, y = Math.sin(a) * ry, c = Math.cos(rot), s = Math.sin(rot);
-  return [cx + x * c - y * s, cy + x * s + y * c];
-});
 const mg = (geometry, symbol) => ({ type: "CIMMarkerGraphic", geometry, symbol });
 
 /* ------------------------------------------------------------------ the plate */
@@ -54,55 +49,19 @@ export function maskLayer() {
 
 const flower = Array.from({ length: 33 }, (_, i) => { const a = i / 32 * 2 * Math.PI, r = 3 + 2 * Math.abs(Math.cos(2 * a)); return [Math.cos(a) * r, Math.sin(a) * r]; });
 
-/** "simple": the original rim. "tiles": a band of azulejo tiles with a twisted-rope (corda) moulding. */
-export function rimLayer(kind) {
+/** The original, simple rim: a cream band with cobalt flowers. */
+/*  (The "tiles" rim is drawn on a canvas by src/rim.js.) */
+export function rimLayer() {
   const layer = new GraphicsLayer({ title: "Rim" });
-  const marker = (graphics, size, placement, frame = 10) => ({ type: "CIMVectorMarker", enable: true, anchorPointUnits: "Relative", size,
-    frame: { xmin: -frame, ymin: -frame, xmax: frame, ymax: frame }, scaleSymbolsProportionally: true, respectFrame: true,
-    markerGraphics: graphics, markerPlacement: { type: "CIMMarkerPlacementAlongLineSameSize", angleToLine: true, ...placement } });
-  let layers;
-  if (kind === "tiles") {
-    const T = 22, out = -(14 + T / 2);              // tile centre: sea edge → rope → line → tiles
-    const tile = dx => [[dx - 10, -10], [dx - 10, 10], [dx + 10, 10], [dx + 10, -10], [dx - 10, -10]];
-    const petals = [0, 1, 2, 3].map(k => ellipse(-10 + Math.cos(k * Math.PI / 2) * 4.6, Math.sin(k * Math.PI / 2) * 4.6, 3.6, 1.9, k * Math.PI / 2));
-    const star = [0, 1, 2, 3, 4, 5, 6, 7].map(k => { const a = k / 8 * 2 * Math.PI + Math.PI / 4, r = k % 2 ? 2.4 : 7.6; return [10 + Math.cos(a) * r, Math.sin(a) * r]; });
-    const corners = [[0, -10], [20, -10], [20, 10], [0, 10]].map(([x, y]) => {
-      const a0 = Math.atan2(-y, 10 - x) - Math.PI / 4;
-      return [[x, y], ...Array.from({ length: 9 }, (_, i) => { const a = a0 + i / 8 * Math.PI / 2; return [x + Math.cos(a) * 4.2, y + Math.sin(a) * 4.2]; }), [x, y]];
-    });
-    // one marker = a pair of tiles (CIM has no per-layer offset along the line, so the alternation lives in the marker)
-    const pair = [
-      mg({ rings: [tile(-10)] }, fill(COBALT)),                              // tile A: cobalt ground, cream quatrefoil
-      ...petals.map(p => mg({ rings: [p] }, fill(CREAM))),
-      mg({ rings: [ellipse(-10, 0, 1.7, 1.7)] }, fill([194, 84, 31, 255])),
-      mg({ rings: [tile(10)] }, fill(CREAM)),                                // tile B: cream ground, cobalt star, quarter-circle corners
-      mg({ rings: [star] }, fill(COBALT)),
-      mg({ rings: [ellipse(10, 0, 1.4, 1.4)] }, fill(CREAM)),
-      ...corners.map(c => mg({ rings: [c] }, fill([30, 75, 184, 200]))),
-    ];
-    const strand = [mg({ rings: [ellipse(0, 0, 4.8, 1.7, Math.PI / 4, 12)] }, { type: "CIMPolygonSymbol", symbolLayers: [
-      { type: "CIMSolidStroke", enable: true, width: 0.7, color: CREAM }, { type: "CIMSolidFill", enable: true, color: COBALT }] })];
-    const off = o => ({ effects: [{ type: "CIMGeometricEffectOffset", method: "Rounded", offset: o, option: "Fast" }] });
-    layers = [
-      { ...marker(pair, T, { placementTemplate: [2 * T], offset: out }), frame: { xmin: -20, ymin: -10, xmax: 20, ymax: 10 } },
-      stroke(1.2, COBALT, off(out - T / 2 - 1)),
-      stroke(1.2, COBALT, off(out + T / 2 + 1)),
-      marker(strand, 7, { placementTemplate: [3.6], offset: -6.5 }),
-      stroke(1.6, COBALT),
-      stroke(-out + T / 2 + 8, CREAM, off(-(-out + T / 2 + 8) / 2)),   // the plate's cream body, outside the sea edge
-    ];
-  } else {
-    layers = [
-      { type: "CIMVectorMarker", enable: true, anchorPointUnits: "Relative", size: 9, frame: { xmin: -5, ymin: -5, xmax: 5, ymax: 5 },
-        markerGraphics: [mg({ rings: [flower] }, fill(COBALT))],
-        markerPlacement: { type: "CIMMarkerPlacementAlongLineSameSize", placementTemplate: [16], angleToLine: true, offset: -9 } },
-      stroke(2, COBALT),
-      stroke(24, CREAM, { effects: [{ type: "CIMGeometricEffectOffset", method: "Rounded", offset: -12, option: "Fast" }] }),
-    ];
-  }
+  const layers = [
+    { type: "CIMVectorMarker", enable: true, anchorPointUnits: "Relative", size: 9, frame: { xmin: -5, ymin: -5, xmax: 5, ymax: 5 },
+      markerGraphics: [mg({ rings: [flower] }, fill(COBALT))],
+      markerPlacement: { type: "CIMMarkerPlacementAlongLineSameSize", placementTemplate: [16], angleToLine: true, offset: -9 } },
+    stroke(2, COBALT),
+    stroke(24, CREAM, { effects: [{ type: "CIMGeometricEffectOffset", method: "Rounded", offset: -12, option: "Fast" }] }),
+  ];
   layer.add(new Graphic({ geometry: plateCircle(), symbol: cim({ type: "CIMLineSymbol", symbolLayers: layers }) }));
-  // the rim is ~16 000 px of markers at Europe scale; closer in it is off-screen anyway, so skip drawing it there
-  layer.maxScale = 9_000_000;
+  layer.maxScale = 9_000_000;   // closer in the rim is off-screen anyway
   return layer;
 }
 
@@ -275,7 +234,7 @@ export function guestLayer(flows) {
   return clientLayer({
     title: "Our guests", geometryType: "point", legendEnabled: true, popupEnabled: true, outFields: ["*"],
     fields: fields(["fid", "integer"], ["city", "string"], ["country", "string"], ["side", "string"], ["guests", "integer"], ["km", "double"]),
-    source: flows.map(f => new Graphic({ geometry: geo(f.o.lon, f.o.lat),
+    source: flows.map(f => new Graphic({ geometry: f.xy,
       attributes: { oid: f.i + 1, fid: f.i, city: f.o.city, country: f.o.country, side: f.o.side, guests: f.o.guests, km: Math.round(f.km) } })),
     renderer: {
       type: "unique-value", field: "side",
@@ -296,4 +255,22 @@ export function guestLayer(flows) {
       content: ({ graphic }) => guestCard(flows[graphic.attributes.fid]),
     },
   });
+}
+
+/* ------------------------------------------------------------------ small-scale outlines (scripts/world.py "lo") */
+/** Dissolved land (fjords closed, specks dropped) with Portugal cut from it; borders come as separate lines. */
+export function landLoLayer(lo, kind) {
+  const s = LAND_STYLE[kind];
+  const src = [...lo.land.map(r => ["land", r]), ...lo.portugal.map(r => ["Portugal", r])].map(([name, rings], i) =>
+    new Graphic({ geometry: new Polygon({ rings: rings.map(projLine), spatialReference: SR }), attributes: { oid: i + 1, name } }));
+  const sym = color => ({ type: "simple-fill", color, outline: { color: [0, 0, 0, 0], width: 0 } });
+  return clientLayer({ title: "Countries (small scale)", geometryType: "polygon", fields: fields(["name", "string"]), source: src,
+    ...(s.shadow ? { effect: s.shadow } : {}),
+    renderer: { type: "unique-value", field: "name", defaultSymbol: sym(s.fill), uniqueValueInfos: [{ value: "Portugal", symbol: sym(s.portugal) }] } });
+}
+export function bordersLoLayer(lo, kind) {
+  const s = LAND_STYLE[kind];
+  return clientLayer({ title: "Borders (small scale)", geometryType: "polyline", fields: fields(),
+    source: lo.borders.map((l, i) => new Graphic({ geometry: new Polyline({ paths: [projLine(l)], spatialReference: SR }), attributes: { oid: i + 1 } })),
+    renderer: { type: "simple", symbol: { type: "simple-line", color: s.border, width: s.borderW } } });
 }

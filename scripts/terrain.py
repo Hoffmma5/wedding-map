@@ -80,7 +80,7 @@ shadow[zz <= 0] = 0
 # ---- relief images, pre-projected into each plate (must match src/projection.js) ---------------------------
 from scipy.ndimage import map_coordinates
 RE, VLON, VLAT = 6371007.2, -8.45, 37.12
-PLATES = {"laea": 166, "aeqd": 166}        # crop (degrees from the venue) per projection, as in projection.js
+PLATES = {"laea": 155.4, "aeqd": 122}        # crop (degrees from the venue) per projection, as in projection.js
 SIZE = 2800
 L0, P0 = np.radians(VLON), np.radians(VLAT)
 lat_top = float(lat[keep].max())

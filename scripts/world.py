@@ -5,7 +5,7 @@ from shapely.ops import unary_union
 from shapely.geometry.polygon import orient
 from pyproj import Transformer
 VLON, VLAT = -8.45, 37.12
-MAX_DEG = 175   # keep land up to here (the plate is cropped at 166°, see src/projection.js); 180° is the antipode
+MAX_DEG = 158   # keep land up to here (the plates are cropped at 122° / 155.4°, see src/projection.js)
 def angdist(lon, lat):
     p0, p = math.radians(VLAT), math.radians(lat)
     return math.degrees(math.acos(max(-1, min(1, math.sin(p0)*math.sin(p) + math.cos(p0)*math.cos(p)*math.cos(math.radians(lon - VLON))))))
@@ -72,7 +72,7 @@ def soft_ring(ids):
         out.extend(p if not out else p[1:])
     return out
 
-countries = []; polys_all = []; drawn = []
+countries = []; polys_all = []; drawn = []; drawn_names = []
 for g in t['objects']['countries']['geometries']:
     name = g['properties']['name']
     if name == 'Antarctica': continue
@@ -90,7 +90,7 @@ for g in t['objects']['countries']['geometries']:
         rr = [r for r in rr if len(r) >= 4]
         if not rr or Polygon(rr[0]).area < 1e-6: continue
         for c in rr: rings_out.append([v for xy in c for v in xy])
-        drawn.append(Polygon(rr[0], rr[1:]).buffer(0))
+        drawn.append(Polygon(rr[0], rr[1:]).buffer(0)); drawn_names.append(name)
     if rings_out: countries.append({'n': name, 'r': rings_out})
 
 # ---- the inked coast -----------------------------------------------------------------------------------------
@@ -113,6 +113,67 @@ for part in (cu.geoms if isinstance(cu, MultiPolygon) else [cu]):
         geom = orient(geom, sign=-1.0)       # clockwise exterior, counter-clockwise holes: holes stay unfilled
         rings = [flat(geom.exterior)] + [flat(i) for i in geom.interiors if len(i.coords) >= 4]
         if len(rings[0]) >= 8: coast.append(rings)
+
+# ---- small-scale version (whole-world view) -----------------------------------------------------------------
+# At world scale the detailed outlines look busy (fjords, specks of islands). Line simplification cannot remove a
+# fjord (it is deep, so it survives), so this is done cartographically on the dissolved land instead:
+# close it (grow, then shrink) to fill fjords and narrow inlets, drop small islands, simplify and smooth.
+# Country borders become separate lines (only the shared arcs), clipped to that land; Portugal is cut from it too,
+# so its coast matches the ink exactly. The app switches to this set when zoomed out beyond ~1:40M.
+LO_CLOSE, LO_TOL, LO_MIN_AREA, LO_INK_TOL, LO_THIN = 0.06, 0.1, 0.3, 0.16, 0.03
+land_hi = unary_union(drawn).buffer(0)
+land_lo = land_hi.buffer(LO_CLOSE, quad_segs=4).buffer(-LO_CLOSE, quad_segs=4)
+def lo_parts(g):
+    out = []
+    for part in (g.geoms if isinstance(g, MultiPolygon) else [g]):
+        if part.area < LO_MIN_AREA: continue
+        s = part.simplify(LO_TOL, preserve_topology=True)
+        if s.is_empty or s.geom_type != "Polygon": continue
+        s = Polygon(chaikin(list(s.exterior.coords), 2, True),
+                    [chaikin(list(i.coords), 2, True) for i in s.interiors if Polygon(i).area > LO_MIN_AREA]).buffer(0)
+        s = s.simplify(LO_THIN, preserve_topology=True)   # keep the curve, drop the surplus vertices
+        out.extend(s.geoms if isinstance(s, MultiPolygon) else [s])
+    return out
+lo_land = unary_union(lo_parts(land_lo))
+def poly_rings(g):
+    res = []
+    for geom in (g.geoms if isinstance(g, MultiPolygon) else [g]):
+        if geom.is_empty or geom.geom_type != "Polygon": continue
+        geom = orient(geom, sign=-1.0)
+        rings = [flat(geom.exterior)] + [flat(i) for i in geom.interiors if len(i.coords) >= 4]
+        if len(rings[0]) >= 8: res.append(rings)
+    return res
+# ink: the lo land plus a looser, smoothed copy of it (same idea as the detailed coast)
+lo_coast = []
+for part in (lo_land.geoms if isinstance(lo_land, MultiPolygon) else [lo_land]):
+    loose = part.simplify(LO_INK_TOL, preserve_topology=True)
+    if loose.geom_type == "Polygon" and not loose.is_empty:
+        loose = Polygon(chaikin(list(loose.exterior.coords), 2, True), [chaikin(list(i.coords), 2, True) for i in loose.interiors]).buffer(0)
+        loose = loose.simplify(LO_THIN, preserve_topology=True)
+        part = unary_union([part, loose])
+    lo_coast += poly_rings(part)
+# borders: arcs used by two countries, simplified + smoothed once, clipped to the lo land
+use = {}
+for g in t['objects']['countries']['geometries']:
+    if g['properties']['name'] == 'Antarctica': continue
+    polys = [g['arcs']] if g['type'] == 'Polygon' else g.get('arcs', []) if g['type'] == 'MultiPolygon' else []
+    for poly in polys:
+        for r in poly:
+            for i in r: use[i if i >= 0 else ~i] = use.get(i if i >= 0 else ~i, 0) + 1
+lo_borders = []
+for i, n in use.items():
+    if n < 2: continue
+    a = unwrap(arcs[i])
+    if max(angdist(*q) for q in a) > MAX_DEG: continue
+    s = soften(a, LO_TOL, closed=False, iterations=2)
+    if len(s) < 2: continue
+    clipped = LineString(s).intersection(lo_land)
+    for seg in getattr(clipped, 'geoms', [clipped]):
+        if seg.geom_type == "LineString" and seg.length > 0.05:
+            lo_borders.append([round(v, 3) for xy in seg.coords for v in xy])
+pt_hi = unary_union([d for d, c in zip(drawn, drawn_names) if c == "Portugal"])
+lo_portugal = poly_rings(lo_land.intersection(pt_hi.buffer(0.02)))
+lo = {'land': poly_rings(lo_land), 'coast': lo_coast, 'borders': lo_borders, 'portugal': lo_portugal}
 land = unary_union(polys_all).buffer(0.9)
 # waves on an even grid in venue-centred LAEA
 fwd = Transformer.from_crs('EPSG:4326', f'+proj=laea +lat_0={VLAT} +lon_0={VLON} +datum=WGS84 +units=m', always_xy=True)
@@ -130,17 +191,17 @@ for step, r0, r1 in [(260_000, 0, 4_200_000), (520_000, 4_200_000, R)]:
             if not (math.isfinite(lon) and math.isfinite(lat)) or angdist(lon, lat) > 150: continue
             if land.contains(Point(lon, lat)): continue
             waves.append([round(lon, 3), round(lat, 3)])
-# graticule every 15°, split beyond 170° from venue
+# graticule every 15°, split beyond 158° from venue
 grat = []
 def add_line(pts):
     seg = []
     for p in pts:
-        if angdist(*p) <= 170: seg.append([round(p[0], 2), round(p[1], 2)])
+        if angdist(*p) <= 158: seg.append([round(p[0], 2), round(p[1], 2)])
         else:
             if len(seg) > 1: grat.append(seg)
             seg = []
     if len(seg) > 1: grat.append(seg)
 for lon in range(-180, 180, 15): add_line([(lon, lat) for lat in range(-80, 81, 2)])
 for lat in range(-75, 76, 15): add_line([(lon, lat) for lon in range(-180, 181, 2)])
-json.dump({'countries': countries, 'coast': coast, 'waves': waves, 'grat': grat}, open(OUT, 'w'), separators=(',', ':'))
-print(len(countries), 'countries', len(coast), 'coast rings', len(waves), 'waves', len(grat), 'grat lines', OUT.stat().st_size//1024, 'KB')
+json.dump({'countries': countries, 'coast': coast, 'lo': lo, 'waves': waves, 'grat': grat}, open(OUT, 'w'), separators=(',', ':'))
+print(len(lo['land']), 'lo land polys', len(lo['borders']), 'lo borders', len(countries), 'countries', len(coast), 'coast rings', len(waves), 'waves', len(grat), 'grat lines', OUT.stat().st_size//1024, 'KB')

@@ -24,10 +24,11 @@ import Polyline from "@arcgis/core/geometry/Polyline.js";
 
 import { VENUE, SIDES, DATA } from "./config.js";
 import { VARIANT, buildPanel } from "./variants.js";
+import { canvasRim } from "./rim.js";
 import { SR, geo, kmTo, PLATE_R, PROJECTION } from "./projection.js";
 import { loadRsvps, loadWorld, loadJson, toOrigins } from "./data.js";
 import { ring, seaLayer, maskLayer, rimLayer, graticuleLayer, rippleLayer, landLayer, contourLayer, waveLayer,
-  reliefLayer, currentsLayer, guestLayer, inkLayer, LAND_STYLE } from "./layers.js";
+  reliefLayer, currentsLayer, guestLayer, inkLayer, landLoLayer, bordersLoLayer, LAND_STYLE } from "./layers.js";
 
 const $ = id => document.getElementById(id);
 const fmt = n => Math.round(n).toLocaleString("en-GB").replace(/,/g, " ");
@@ -62,7 +63,13 @@ const ORIGINS = toOrigins(RSVPS);
 /* =========================================================================
    LAYERS (bottom → top): sea, sea decoration, coastal lines, land, relief, mask, rim, flows, guests, venue
    ========================================================================= */
-const flows = ORIGINS.map((o, i) => ({ o, i, km: kmTo(o.lon, o.lat), xy: geo(o.lon, o.lat) })).sort((a, b) => b.km - a.km);
+// A guest from beyond the plate's edge (Darwin, 136°) starts on the rim, in the true direction of home: on an
+// azimuthal map every direction from the venue is true, so only the distance is cut short.
+const onPlate = (lon, lat) => {
+  const p = geo(lon, lat), r = Math.hypot(p.x, p.y), max = PLATE_R * 0.975;
+  return r <= max ? { xy: p, beyond: false } : { xy: new Point({ x: p.x * max / r, y: p.y * max / r, spatialReference: SR }), beyond: true };
+};
+const flows = ORIGINS.map((o, i) => ({ o, i, km: kmTo(o.lon, o.lat), ...onPlate(o.lon, o.lat) })).sort((a, b) => b.km - a.km);
 flows.forEach((f, i) => { f.i = i; });
 
 const waveA = SEA.has("waves") ? waveLayer(WORLD, NATIVE ? null : 0, NATIVE) : null;
@@ -70,13 +77,16 @@ const waveB = SEA.has("waves") && !NATIVE ? waveLayer(WORLD, 1, false) : null;
 const TIMING = import.meta.env.DEV || location.search.includes("timing");
 const mark = s => TIMING && console.info(`[timing] ${s}: ${Math.round(performance.now())} ms since page start`);
 mark("data loaded");
+const SPLIT = 40_000_000;   // switch between the detailed and the small-scale outlines (Europe zoom is 1:20M)
+const scaleSet = (layers, which) => layers.filter(Boolean).map(l => { if (which === "hi") l.minScale = SPLIT; else l.maxScale = SPLIT; return l; });
 const decor = [
   graticuleLayer(WORLD),
   waveA, waveB,
   SEA.has("contours") ? contourLayer(CONTOURS, "sea") : null,
-  rippleLayer(WORLD),
-  LAND_STYLE[LAND].coast ? inkLayer(WORLD, LAND_STYLE[LAND].coast) : null,
-  landLayer(WORLD, LAND),
+  // two generalizations: detailed from the Europe zoom inwards, a calmer one for the whole-world view
+  ...scaleSet([rippleLayer(WORLD), LAND_STYLE[LAND].coast ? inkLayer(WORLD, LAND_STYLE[LAND].coast) : null, landLayer(WORLD, LAND)], "hi"),
+  ...scaleSet([rippleLayer(WORLD.lo), LAND_STYLE[LAND].coast ? inkLayer(WORLD.lo, LAND_STYLE[LAND].coast) : null,
+    landLoLayer(WORLD.lo, LAND), bordersLoLayer(WORLD.lo, LAND)], "lo"),
   needDem ? await reliefLayer(DATA.relief(PROJECTION), DATA.reliefMeta(PROJECTION), LAND_STYLE[LAND].relief) : null,
 ].filter(Boolean);
 mark("layers built");
@@ -85,7 +95,7 @@ const originL = guestLayer(flows);
 // Animated layers (geometry changes every frame, so GraphicsLayers in the view's spatial reference)
 const flowL = new GraphicsLayer({ title: "Flows" }), dotL = new GraphicsLayer({ title: "Travellers" }), venueL = new GraphicsLayer({ title: "Venue" });
 
-const map = new Map({ layers: [seaLayer(), ...decor, maskLayer(), rimLayer(VARIANT.rim), flowL, dotL, originL, venueL] });
+const map = new Map({ layers: [seaLayer(), ...decor, maskLayer(), ...(VARIANT.rim === "tiles" ? [] : [rimLayer(VARIANT.rim)]), flowL, dotL, originL, venueL] });
 
 /* =========================================================================
    THE MAP COMPONENT
@@ -107,6 +117,7 @@ mapEl.map = map;
 await mapEl.viewOnReady();
 mark("view ready");
 const view = mapEl.view;
+if (VARIANT.rim === "tiles") canvasRim(view, geo(VENUE.lon, VENUE.lat), PLATE_R);   // azulejo rim, exact at every zoom
 if (TIMING) for (const l of map.layers) view.whenLayerView(l).then(lv => reactiveUtils.whenOnce(() => !lv.updating)).then(() => mark(`drawn: ${l.title}`));
 try {
   // a clean card: no "Zoom to" action bar, no collapse or paging controls

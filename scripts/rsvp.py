@@ -10,20 +10,21 @@ C = [
  ("Plzeň","Czechia",13.38,49.75,"A",2,"cz"), ("Brno","Czechia",16.61,49.20,"A",2,"cz"),
  ("Tokyo","Japan",139.69,35.69,"A",1,"jp"), ("Nicosia","Cyprus",33.38,35.17,"B",1,"cy"),
  ("Mexico City","Mexico",-99.13,19.43,"B",1,"mx"), ("Istanbul","Turkey",28.98,41.01,"A",1,"tr"),
+ ("Darwin","Australia",130.84,-12.46,"A",1,"au"),
 ]
-FIXED = {"Istanbul": 2}   # exactly two people from Turkey
+FIXED = {"Istanbul": 2, "Darwin": 2}   # exactly two people from Turkey, two from Australia
 N = {
  "cz": (["Jana","Tomáš","Petra","Jakub","Lucie","Martin","Kateřina","Ondřej","Tereza","Lukáš","Veronika","Filip","Eva","David","Barbora","Michal"],["Nováková","Dvořák","Černá","Procházka","Kučerová","Veselý","Horáková","Němec","Marková","Pokorný","Králová","Beneš"]),
  "de": (["Anna","Lukas","Sophie","Jonas","Lena","Felix","Marie","Paul","Laura","Maximilian"],["Müller","Schmidt","Weber","Wagner","Becker","Hoffmann","Schäfer","Koch"]),
  "pt": (["Ana","João","Mariana","Pedro","Inês","Tiago","Beatriz","Rui","Catarina","Miguel","Sofia","Diogo","Leonor","Nuno","Rita","André"],["Silva","Santos","Ferreira","Pereira","Oliveira","Costa","Rodrigues","Martins","Sousa","Fernandes","Gonçalves","Lopes"]),
  "jp": (["Yuki","Haruto","Sakura"],["Tanaka","Sato","Suzuki"]), "cy": (["Eleni","Andreas"],["Georgiou","Christodoulou"]),
- "mx": (["Sofía","Diego","Valeria"],["Hernández","García","López"]), "tr": (["Elif","Emre"],["Yılmaz","Demir"]),
+ "mx": (["Sofía","Diego","Valeria"],["Hernández","García","López"]), "tr": (["Elif","Emre"],["Yılmaz","Demir"]), "au": (["Olivia","Jack"],["Walker","Mitchell"]),
 }
 REL = {"A":["Family","School friends","University (geomatics)","Arcdata colleagues","Friends from Augsburg"],
        "B":["Family","Cousins","Med school friends","Hospital colleagues","Childhood friends"]}
 NOTES = {"A":["Bringing a GPS, just in case.","First time in Portugal!","Will dance. Can't be stopped.","Already practising 'obrigado'.","",""],
          "B":["Bringing Avó's famous cake.","Will cry during the vows.","Driving down with the whole family.","Promised to learn one Czech word.","",""]}
-SPECIAL = {"Tokyo":"Flying 11 000 km for this!","Mexico City":"Bringing the tequila.","Nicosia":"Sun guaranteed – we're used to it.","Istanbul":"Two of us, one suitcase of baklava."}
+SPECIAL = {"Tokyo":"Flying 11 000 km for this!","Mexico City":"Bringing the tequila.","Nicosia":"Sun guaranteed – we're used to it.","Istanbul":"Two of us, one suitcase of baklava.", "Darwin":"From the Top End to the Algarve!"}
 rows = []; i = 0
 for city,country,lon,lat,side,n,pool in C:
     for _ in range(n):

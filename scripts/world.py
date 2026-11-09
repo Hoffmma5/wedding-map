@@ -2,8 +2,10 @@ import json, math, random
 from pathlib import Path
 from shapely.geometry import Polygon, MultiPolygon, Point, LineString
 from shapely.ops import unary_union
+from shapely.geometry.polygon import orient
 from pyproj import Transformer
 VLON, VLAT = -8.45, 37.12
+MAX_DEG = 175   # keep land up to here (the plate is cropped at 166°, see src/projection.js); 180° is the antipode
 def angdist(lon, lat):
     p0, p = math.radians(VLAT), math.radians(lat)
     return math.degrees(math.acos(max(-1, min(1, math.sin(p0)*math.sin(p) + math.cos(p0)*math.cos(p)*math.cos(math.radians(lon - VLON))))))
@@ -31,48 +33,86 @@ def unwrap(pts):
     if any(x >= 170 for x, _ in pts) and any(x <= -170 for x, _ in pts):
         return [(x + 360 if x < 0 else x, y) for x, y in pts]
     return pts
+# ---- generalization on the topology ------------------------------------------------------------------------
+# world-atlas is TopoJSON: every border is one shared arc. Simplifying and smoothing each *arc* once (instead of each
+# country on its own) keeps neighbours identical, so no slivers of sea open up along land borders.
+NEAR_TOL, FAR_TOL = 0.02, 0.12        # Douglas-Peucker tolerance (deg) within / beyond 45° of the venue
+
+def chaikin(pts, iterations=2, closed=False):
+    """Corner cutting: rounds hard vertices; open arcs keep their end points (the border junctions)."""
+    for _ in range(iterations):
+        if len(pts) < 3: return pts
+        cut = []
+        for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+            cut += [(0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1), (0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1)]
+        pts = cut + [cut[0]] if closed else [pts[0]] + cut + [pts[-1]]
+    return pts
+
+def soften(pts, tol, closed, iterations):
+    if len(pts) >= 3:
+        s = LineString(pts).simplify(tol, preserve_topology=False)
+        pts = list(s.coords) if len(s.coords) >= (4 if closed else 2) else pts
+    pts = chaikin(pts, iterations, closed)
+    s = LineString(pts).simplify(tol * 0.3, preserve_topology=False)    # drop the near-collinear points again
+    return [(round(x, 3), round(y, 3)) for x, y in s.coords]
+
+_arc_cache = {}
+def soft_arc(i):
+    if i not in _arc_cache:
+        a = unwrap(arcs[i])   # an arc that jumps across ±180° would otherwise be smoothed into a line across the globe
+        near = min(angdist(*p) for p in a) < 45
+        # near the venue: two rounds of smoothing (you zoom in there); far away one is enough
+        _arc_cache[i] = soften(a, NEAR_TOL if near else FAR_TOL, closed=len(a) > 3 and a[0] == a[-1], iterations=2 if near else 1)
+    return _arc_cache[i]
+
+def soft_ring(ids):
+    out = []
+    for i in ids:
+        p = soft_arc(i) if i >= 0 else soft_arc(~i)[::-1]
+        out.extend(p if not out else p[1:])
+    return out
+
 countries = []; polys_all = []; drawn = []
 for g in t['objects']['countries']['geometries']:
     name = g['properties']['name']
     if name == 'Antarctica': continue
     parts = [g['arcs']] if g['type'] == 'Polygon' else g.get('arcs', []) if g['type'] == 'MultiPolygon' else []
-    rings_out = []; kept = []
+    rings_out = []
     for poly in parts:
-        rr = [unwrap(ring(r)) for r in poly]
-        if any(angdist(*p) > 158 for p in rr[0]): continue
-        shp = Polygon(rr[0], rr[1:]).buffer(0)
+        raw = [unwrap(ring(r)) for r in poly]
+        if any(angdist(*p) > MAX_DEG for p in raw[0]): continue
+        shp = Polygon(raw[0], raw[1:]).buffer(0)
         if shp.is_empty: continue
-        near = max(angdist(*p) for p in rr[0]) < 45
+        near = max(angdist(*p) for p in raw[0]) < 45
         if shp.area < (0.0006 if near else 0.08): continue
         polys_all.append(shp)
-        kept.append(shp)
-    for shp in kept:
-        for part in (shp.geoms if isinstance(shp, MultiPolygon) else [shp]):
-            near = max(angdist(*p) for p in part.exterior.coords) < 45
-            s = part.simplify(0.02 if near else 0.12, preserve_topology=True)
-            for geom in (s.geoms if isinstance(s, MultiPolygon) else [s]):
-                rr2 = [[(round(x, 2), round(y, 2)) for x, y in rg.coords] for rg in [geom.exterior] + list(geom.interiors)]
-                for c in rr2:
-                    if len(c) >= 4: rings_out.append([v for xy in c for v in xy])
-                if len(rr2[0]) >= 4: drawn.append(Polygon(rr2[0], [r for r in rr2[1:] if len(r) >= 4]).buffer(0))
+        rr = [unwrap(soft_ring(r)) for r in poly]
+        rr = [r for r in rr if len(r) >= 4]
+        if not rr or Polygon(rr[0]).area < 1e-6: continue
+        for c in rr: rings_out.append([v for xy in c for v in xy])
+        drawn.append(Polygon(rr[0], rr[1:]).buffer(0))
     if rings_out: countries.append({'n': name, 'r': rings_out})
-# Dissolved coastline for the coastal water lines and the inked coast. It starts from exactly the vertices the
-# countries are drawn with, so it can never drift far from the land edge. A tiny mitre-joined close (dilate, then
-# erode) fills the hairline gaps where two countries' independently simplified borders meet the sea, without
-# rounding any corners.
-coast = []
-CLOSE = 0.012
-cu = unary_union(drawn).buffer(CLOSE, join_style=2, mitre_limit=20).buffer(-CLOSE, join_style=2, mitre_limit=20)
-# The ink should look hand-drawn, not traced: simplify it once more, a bit coarser than the land (the UK look:
-# land 0.02°, ink 0.03°), so it drifts off the land edge by up to ~3 km here and there, like misregistered print.
+
+# ---- the inked coast -----------------------------------------------------------------------------------------
+# Dissolve the drawn countries (they share their borders exactly, so this is clean), then draw the ink from a
+# coarser, smoothed copy (the UK look: land 0.02°, ink 0.03°) so it wanders like hand-inking. The ink shape is the
+# union of land and that copy: where the hand strays out to sea the gap is filled with ink (the app fills it),
+# where it strays inland the ink simply follows the land edge. No gaps between ink and land.
 INK_TOL = 0.03
+coast = []   # polygons: [exterior, hole, hole…] as flat lon/lat rings, exterior clockwise (Esri convention)
+cu = unary_union(drawn).buffer(0)
+def flat(rg): return [round(v, 3) for xy in rg.coords for v in xy]
 for part in (cu.geoms if isinstance(cu, MultiPolygon) else [cu]):
     if part.area < 0.0004: continue
-    part = part.simplify(INK_TOL, preserve_topology=True)
-    if part.is_empty or part.geom_type != "Polygon": continue
-    for rg in [part.exterior] + [i for i in part.interiors if Polygon(i).area > 0.05]:
-        c = [round(v, 3) for xy in rg.coords for v in xy]
-        if len(c) >= 8: coast.append(c)
+    loose = part.simplify(INK_TOL, preserve_topology=True)
+    if loose.geom_type == "Polygon" and not loose.is_empty:
+        loose = Polygon(chaikin(list(loose.exterior.coords), 2, True), [chaikin(list(i.coords), 2, True) for i in loose.interiors]).buffer(0)
+        loose = loose.simplify(0.006, preserve_topology=True)   # thin out the smoothed copy (the land keeps its vertices)
+        part = unary_union([part, loose])
+    for geom in (part.geoms if isinstance(part, MultiPolygon) else [part]):
+        geom = orient(geom, sign=-1.0)       # clockwise exterior, counter-clockwise holes: holes stay unfilled
+        rings = [flat(geom.exterior)] + [flat(i) for i in geom.interiors if len(i.coords) >= 4]
+        if len(rings[0]) >= 8: coast.append(rings)
 land = unary_union(polys_all).buffer(0.9)
 # waves on an even grid in venue-centred LAEA
 fwd = Transformer.from_crs('EPSG:4326', f'+proj=laea +lat_0={VLAT} +lon_0={VLON} +datum=WGS84 +units=m', always_xy=True)
@@ -90,12 +130,12 @@ for step, r0, r1 in [(260_000, 0, 4_200_000), (520_000, 4_200_000, R)]:
             if not (math.isfinite(lon) and math.isfinite(lat)) or angdist(lon, lat) > 150: continue
             if land.contains(Point(lon, lat)): continue
             waves.append([round(lon, 3), round(lat, 3)])
-# graticule every 15°, split beyond 150° from venue
+# graticule every 15°, split beyond 170° from venue
 grat = []
 def add_line(pts):
     seg = []
     for p in pts:
-        if angdist(*p) <= 150: seg.append([round(p[0], 2), round(p[1], 2)])
+        if angdist(*p) <= 170: seg.append([round(p[0], 2), round(p[1], 2)])
         else:
             if len(seg) > 1: grat.append(seg)
             seg = []

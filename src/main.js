@@ -27,7 +27,7 @@ import { VARIANT, buildPanel } from "./variants.js";
 import { SR, geo, kmTo, PLATE_R, PROJECTION } from "./projection.js";
 import { loadRsvps, loadWorld, loadJson, toOrigins } from "./data.js";
 import { ring, seaLayer, maskLayer, rimLayer, graticuleLayer, rippleLayer, landLayer, contourLayer, waveLayer,
-  reliefLayer, currentsLayer, guestLayer, LAND_STYLE } from "./layers.js";
+  reliefLayer, currentsLayer, guestLayer, inkLayer, LAND_STYLE } from "./layers.js";
 
 const $ = id => document.getElementById(id);
 const fmt = n => Math.round(n).toLocaleString("en-GB").replace(/,/g, " ");
@@ -46,7 +46,7 @@ $("sideLegend").innerHTML = Object.values(SIDES).map(s => `<span><i style="backg
    ========================================================================= */
 const SEA = new Set(VARIANT.sea), LAND = VARIANT.land, ARRIVE = VARIANT.flows === "arrive", NATIVE = VARIANT.cim;
 // client-side rasters are projected through the projection engine, so load it up front (≈1 s, cached)
-const needContours = SEA.has("contours") || LAND === "azulejo", needDem = LAND !== "sage";
+const needContours = SEA.has("contours"), needDem = LAND !== "sage";
 let RSVPS, WORLD, CONTOURS, CURRENTS;
 try {
   [RSVPS, WORLD, CONTOURS, CURRENTS] = await Promise.all([
@@ -74,10 +74,10 @@ const decor = [
   graticuleLayer(WORLD),
   waveA, waveB,
   SEA.has("contours") ? contourLayer(CONTOURS, "sea") : null,
-  rippleLayer(WORLD, LAND_STYLE[LAND].coast),
+  rippleLayer(WORLD),
+  LAND_STYLE[LAND].coast ? inkLayer(WORLD, LAND_STYLE[LAND].coast) : null,
   landLayer(WORLD, LAND),
   needDem ? await reliefLayer(DATA.relief(PROJECTION), DATA.reliefMeta(PROJECTION), LAND_STYLE[LAND].relief) : null,
-  LAND === "azulejo" ? contourLayer(CONTOURS, "land") : null,
 ].filter(Boolean);
 mark("layers built");
 const originL = guestLayer(flows);
@@ -336,7 +336,6 @@ view.on("click", async (e) => {
   else { mapEl.closePopup(); shownFid = null; setHot(null); }
 });
 
-$("replay").addEventListener("click", restart);
 
 // let the layers finish their first draw before the intro starts, so the flows don't compete with tessellation
 await Promise.race([reactiveUtils.whenOnce(() => !view.updating), new Promise(r => setTimeout(r, 2500))]);

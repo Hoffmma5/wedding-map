@@ -14,10 +14,10 @@ const rad = d => d * Math.PI / 180, deg = r => r * 180 / Math.PI;
 const L0 = rad(VENUE.lon), P0 = rad(VENUE.lat), sP0 = Math.sin(P0), cP0 = Math.cos(P0);
 
 const PROJ = {
-  laea: { name: "Lambert_Azimuthal_Equal_Area", crop: 155.4,
+  laea: { name: "Lambert_Azimuthal_Equal_Area", crop: 166,
     k: c => Math.sqrt(2 / (1 + Math.cos(c))),                       // radial scale as a function of angular distance
     rho: c => 2 * RE * Math.sin(c / 2), c: rho => 2 * Math.asin(Math.min(1, rho / (2 * RE))) },
-  aeqd: { name: "Azimuthal_Equidistant", crop: 122,
+  aeqd: { name: "Azimuthal_Equidistant", crop: 166,   // all of Australia (Darwin 136°, Sydney 163°)
     k: c => (c < 1e-9 ? 1 : c / Math.sin(c)),
     rho: c => RE * c, c: rho => rho / RE },
 };

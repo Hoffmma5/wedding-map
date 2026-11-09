@@ -116,17 +116,28 @@ export function graticuleLayer(world) {
 const landSource = (world) => world.countries.map(c => ({ rings: c.r.map(projLine), name: c.n }))
   .map((c, i) => new Graphic({ geometry: new Polygon({ rings: c.rings, spatialReference: SR }), attributes: { oid: i + 1, name: c.name } }));
 
-// Coastal water lines: a CIM polygon symbol of stacked strokes drawn *under* the land. Its top stroke, half hidden
-// by the land, doubles as an inked coastline (much cheaper than a blur effect on the land layer).
-export function rippleLayer(world, coast = null) {
-  // the dissolved coastline (scripts/world.py), not the countries: no strokes wasted on borders hidden under land
-  const source = world.coast.map((r, i) => new Graphic({ geometry: new Polygon({ rings: [projLine(r)], spatialReference: SR }), attributes: { oid: i + 1 } }));
-  return clientLayer({ title: "Coastal water lines", geometryType: "polygon", fields: fields(), source,
+// The dissolved, hand-inked coastline (scripts/world.py), not the countries: no strokes wasted on borders under land.
+// Each entry is [exterior, holes…]; holes (inland seas cut off at this scale) must stay holes, or the ink floods them.
+const coastSource = world => world.coast.map((rings, i) => new Graphic({ geometry: new Polygon({ rings: rings.map(projLine), spatialReference: SR }), attributes: { oid: i + 1 } }));
+
+// Coastal water lines: stacked strokes drawn *under* the land
+export function rippleLayer(world) {
+  return clientLayer({ title: "Coastal water lines", geometryType: "polygon", fields: fields(), source: coastSource(world),
     renderer: { type: "simple", symbol: cim({ type: "CIMPolygonSymbol",
-      symbolLayers: [...(coast ? [{ type: "CIMSolidStroke", enable: true, width: 1.8, color: coast, joinStyle: "Round" }] : []), ...[3, 7.5, 12].flatMap((d, k) => [
+      symbolLayers: [3, 7.5, 12].flatMap((d, k) => [
         { type: "CIMSolidStroke", enable: true, width: 2 * d - 0.8, color: SEA, joinStyle: "Round" },
         { type: "CIMSolidStroke", enable: true, width: 2 * d + 0.8, color: [30, 75, 184, Math.round(255 * 0.16 * (1 - k / 4))], joinStyle: "Round" },
-      ])] }) } });
+      ]) }) } });
+}
+
+/** The inked coast: outline + fill, above the water lines and below the land. The land covers it except where the
+    hand-drawn coast strays out to sea, and those wedges read as thicker ink. It has to be a layer of its own: within
+    one symbol the SDK paints fills before strokes, so the water lines' wide strokes would cover the wedges. */
+export function inkLayer(world, color) {
+  return clientLayer({ title: "Coast ink", geometryType: "polygon", fields: fields(), source: coastSource(world),
+    renderer: { type: "simple", symbol: cim({ type: "CIMPolygonSymbol", symbolLayers: [
+      { type: "CIMSolidStroke", enable: true, width: 1.8, color, joinStyle: "Round" },
+      { type: "CIMSolidFill", enable: true, color }] }) } });
 }
 
 export const LAND_STYLE = {

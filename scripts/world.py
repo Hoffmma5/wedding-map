@@ -31,7 +31,7 @@ def unwrap(pts):
     if any(x >= 170 for x, _ in pts) and any(x <= -170 for x, _ in pts):
         return [(x + 360 if x < 0 else x, y) for x, y in pts]
     return pts
-countries = []; polys_all = []
+countries = []; polys_all = []; drawn = []
 for g in t['objects']['countries']['geometries']:
     name = g['properties']['name']
     if name == 'Antarctica': continue
@@ -51,21 +51,28 @@ for g in t['objects']['countries']['geometries']:
             near = max(angdist(*p) for p in part.exterior.coords) < 45
             s = part.simplify(0.02 if near else 0.12, preserve_topology=True)
             for geom in (s.geoms if isinstance(s, MultiPolygon) else [s]):
-                for rg in [geom.exterior] + list(geom.interiors):
-                    c = [round(v, 2) for xy in rg.coords for v in xy]
-                    if len(c) >= 8: rings_out.append(c)
+                rr2 = [[(round(x, 2), round(y, 2)) for x, y in rg.coords] for rg in [geom.exterior] + list(geom.interiors)]
+                for c in rr2:
+                    if len(c) >= 4: rings_out.append([v for xy in c for v in xy])
+                if len(rr2[0]) >= 4: drawn.append(Polygon(rr2[0], [r for r in rr2[1:] if len(r) >= 4]).buffer(0))
     if rings_out: countries.append({'n': name, 'r': rings_out})
-# dissolved coastline (no internal borders) for the coastal water lines: half the edges, nothing hidden under land
+# Dissolved coastline for the coastal water lines and the inked coast. It starts from exactly the vertices the
+# countries are drawn with, so it can never drift far from the land edge. A tiny mitre-joined close (dilate, then
+# erode) fills the hairline gaps where two countries' independently simplified borders meet the sea, without
+# rounding any corners.
 coast = []
-cu = unary_union([p.buffer(0.01) for p in polys_all]).buffer(-0.01)
+CLOSE = 0.012
+cu = unary_union(drawn).buffer(CLOSE, join_style=2, mitre_limit=20).buffer(-CLOSE, join_style=2, mitre_limit=20)
+# The ink should look hand-drawn, not traced: simplify it once more, a bit coarser than the land (the UK look:
+# land 0.02°, ink 0.03°), so it drifts off the land edge by up to ~3 km here and there, like misregistered print.
+INK_TOL = 0.03
 for part in (cu.geoms if isinstance(cu, MultiPolygon) else [cu]):
-    if part.area < 0.004: continue
-    near = max(angdist(*p) for p in part.exterior.coords) < 45
-    s = part.simplify(0.03 if near else 0.12, preserve_topology=True)
-    for geom in (s.geoms if isinstance(s, MultiPolygon) else [s]):
-        for rg in [geom.exterior] + [i for i in geom.interiors if Polygon(i).area > 0.05]:
-            c = [round(v, 2) for xy in rg.coords for v in xy]
-            if len(c) >= 8: coast.append(c)
+    if part.area < 0.0004: continue
+    part = part.simplify(INK_TOL, preserve_topology=True)
+    if part.is_empty or part.geom_type != "Polygon": continue
+    for rg in [part.exterior] + [i for i in part.interiors if Polygon(i).area > 0.05]:
+        c = [round(v, 3) for xy in rg.coords for v in xy]
+        if len(c) >= 8: coast.append(c)
 land = unary_union(polys_all).buffer(0.9)
 # waves on an even grid in venue-centred LAEA
 fwd = Transformer.from_crs('EPSG:4326', f'+proj=laea +lat_0={VLAT} +lon_0={VLON} +datum=WGS84 +units=m', always_xy=True)

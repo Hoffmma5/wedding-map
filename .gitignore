@@ -11,3 +11,5 @@ basemap/*.png
 basemap/*.aprx
 basemap/*.lyrx
 basemap/ImportLog/
+basemap/*.atbx
+basemap/.backups/

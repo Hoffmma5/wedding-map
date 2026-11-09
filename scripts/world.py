@@ -102,13 +102,32 @@ INK_TOL = 0.03
 coast = []   # polygons: [exterior, hole, hole…] as flat lon/lat rings, exterior clockwise (Esri convention)
 cu = unary_union(drawn).buffer(0)
 def flat(rg): return [round(v, 3) for xy in rg.coords for v in xy]
+def poly_rings(g):
+    res = []
+    for geom in (g.geoms if isinstance(g, MultiPolygon) else [g]):
+        if geom.is_empty or geom.geom_type != "Polygon": continue
+        geom = orient(geom, sign=-1.0)
+        rings = [flat(geom.exterior)] + [flat(i) for i in geom.interiors if len(i.coords) >= 4]
+        if len(rings[0]) >= 8: res.append(rings)
+    return res
+def wedge_rings(inked, land):
+    """only the ink outside the land (what the eye sees as a thicker stroke): drawing just these, instead of a
+    land-sized filled polygon under the land, means nothing big can flash while the map redraws tiles"""
+    w = inked.difference(land)
+    return poly_rings(unary_union([p for p in getattr(w, 'geoms', [w]) if p.geom_type == "Polygon" and p.area > 2e-6])) if not w.is_empty else []
+wedges = []
+ripple = []   # the water lines follow the inked coast, but need far fewer vertices (they are soft, wide strokes)
+RIPPLE_TOL = 0.012
 for part in (cu.geoms if isinstance(cu, MultiPolygon) else [cu]):
     if part.area < 0.0004: continue
     loose = part.simplify(INK_TOL, preserve_topology=True)
     if loose.geom_type == "Polygon" and not loose.is_empty:
         loose = Polygon(chaikin(list(loose.exterior.coords), 2, True), [chaikin(list(i.coords), 2, True) for i in loose.interiors]).buffer(0)
         loose = loose.simplify(0.006, preserve_topology=True)   # thin out the smoothed copy (the land keeps its vertices)
+        land_part = part
         part = unary_union([part, loose])
+        wedges += wedge_rings(part, land_part)
+    ripple += poly_rings(part.simplify(RIPPLE_TOL, preserve_topology=True))
     for geom in (part.geoms if isinstance(part, MultiPolygon) else [part]):
         geom = orient(geom, sign=-1.0)       # clockwise exterior, counter-clockwise holes: holes stay unfilled
         rings = [flat(geom.exterior)] + [flat(i) for i in geom.interiors if len(i.coords) >= 4]
@@ -135,22 +154,16 @@ def lo_parts(g):
         out.extend(s.geoms if isinstance(s, MultiPolygon) else [s])
     return out
 lo_land = unary_union(lo_parts(land_lo))
-def poly_rings(g):
-    res = []
-    for geom in (g.geoms if isinstance(g, MultiPolygon) else [g]):
-        if geom.is_empty or geom.geom_type != "Polygon": continue
-        geom = orient(geom, sign=-1.0)
-        rings = [flat(geom.exterior)] + [flat(i) for i in geom.interiors if len(i.coords) >= 4]
-        if len(rings[0]) >= 8: res.append(rings)
-    return res
 # ink: the lo land plus a looser, smoothed copy of it (same idea as the detailed coast)
-lo_coast = []
+lo_coast = []; lo_wedges = []
 for part in (lo_land.geoms if isinstance(lo_land, MultiPolygon) else [lo_land]):
     loose = part.simplify(LO_INK_TOL, preserve_topology=True)
     if loose.geom_type == "Polygon" and not loose.is_empty:
         loose = Polygon(chaikin(list(loose.exterior.coords), 2, True), [chaikin(list(i.coords), 2, True) for i in loose.interiors]).buffer(0)
         loose = loose.simplify(LO_THIN, preserve_topology=True)
+        land_part = part
         part = unary_union([part, loose])
+        lo_wedges += wedge_rings(part, land_part)
     lo_coast += poly_rings(part)
 # borders: arcs used by two countries, simplified + smoothed once, clipped to the lo land
 use = {}
@@ -173,7 +186,7 @@ for i, n in use.items():
             lo_borders.append([round(v, 3) for xy in seg.coords for v in xy])
 pt_hi = unary_union([d for d, c in zip(drawn, drawn_names) if c == "Portugal"])
 lo_portugal = poly_rings(lo_land.intersection(pt_hi.buffer(0.02)))
-lo = {'land': poly_rings(lo_land), 'coast': lo_coast, 'borders': lo_borders, 'portugal': lo_portugal}
+lo = {'land': poly_rings(lo_land), 'coast': lo_coast, 'wedges': lo_wedges, 'borders': lo_borders, 'portugal': lo_portugal}
 land = unary_union(polys_all).buffer(0.9)
 # waves on an even grid in venue-centred LAEA
 fwd = Transformer.from_crs('EPSG:4326', f'+proj=laea +lat_0={VLAT} +lon_0={VLON} +datum=WGS84 +units=m', always_xy=True)
@@ -203,5 +216,5 @@ def add_line(pts):
     if len(seg) > 1: grat.append(seg)
 for lon in range(-180, 180, 15): add_line([(lon, lat) for lat in range(-80, 81, 2)])
 for lat in range(-75, 76, 15): add_line([(lon, lat) for lon in range(-180, 181, 2)])
-json.dump({'countries': countries, 'coast': coast, 'lo': lo, 'waves': waves, 'grat': grat}, open(OUT, 'w'), separators=(',', ':'))
+json.dump({'countries': countries, 'coast': coast, 'ripple': ripple, 'wedges': wedges, 'lo': lo, 'waves': waves, 'grat': grat}, open(OUT, 'w'), separators=(',', ':'))
 print(len(lo['land']), 'lo land polys', len(lo['borders']), 'lo borders', len(countries), 'countries', len(coast), 'coast rings', len(waves), 'waves', len(grat), 'grat lines', OUT.stat().st_size//1024, 'KB')

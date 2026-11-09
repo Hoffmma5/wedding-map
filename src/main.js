@@ -77,16 +77,20 @@ const waveB = SEA.has("waves") && !NATIVE ? waveLayer(WORLD, 1, false) : null;
 const TIMING = import.meta.env.DEV || location.search.includes("timing");
 const mark = s => TIMING && console.info(`[timing] ${s}: ${Math.round(performance.now())} ms since page start`);
 mark("data loaded");
-const SPLIT = 40_000_000;   // switch between the detailed and the small-scale outlines (Europe zoom is 1:20M)
-const scaleSet = (layers, which) => layers.filter(Boolean).map(l => { if (which === "hi") l.minScale = SPLIT; else l.maxScale = SPLIT; return l; });
+// Two generalizations: detailed from the Europe zoom (1:20M) inwards, a calmer one for the whole-world view. The
+// land of both overlaps between 1:30M and 1:45M (the small-scale land on top), so while zooming through the switch
+// one land is always already drawn; water lines and ink switch at 1:38M, inside that overlap.
+const SWITCH = { lines: 38_000_000, landHi: 45_000_000, landLo: 30_000_000 };
+const hiSet = (l, s = SWITCH.lines) => { if (l) l.minScale = s; return l; };
+const loSet = (l, s = SWITCH.lines) => { if (l) l.maxScale = s; return l; };
+const INK = LAND_STYLE[LAND].coast;
 const decor = [
   graticuleLayer(WORLD),
   waveA, waveB,
   SEA.has("contours") ? contourLayer(CONTOURS, "sea") : null,
-  // two generalizations: detailed from the Europe zoom inwards, a calmer one for the whole-world view
-  ...scaleSet([rippleLayer(WORLD), LAND_STYLE[LAND].coast ? inkLayer(WORLD, LAND_STYLE[LAND].coast) : null, landLayer(WORLD, LAND)], "hi"),
-  ...scaleSet([rippleLayer(WORLD.lo), LAND_STYLE[LAND].coast ? inkLayer(WORLD.lo, LAND_STYLE[LAND].coast) : null,
-    landLoLayer(WORLD.lo, LAND), bordersLoLayer(WORLD.lo, LAND)], "lo"),
+  hiSet(rippleLayer({ coast: WORLD.ripple })), loSet(rippleLayer(WORLD.lo)),   // water lines: a lighter copy of the inked coast
+  INK ? hiSet(inkLayer(WORLD, INK)) : null, INK ? loSet(inkLayer(WORLD.lo, INK)) : null,
+  hiSet(landLayer(WORLD, LAND), SWITCH.landHi), loSet(landLoLayer(WORLD.lo, LAND), SWITCH.landLo), loSet(bordersLoLayer(WORLD.lo, LAND), SWITCH.landLo),
   needDem ? await reliefLayer(DATA.relief(PROJECTION), DATA.reliefMeta(PROJECTION), LAND_STYLE[LAND].relief) : null,
 ].filter(Boolean);
 mark("layers built");

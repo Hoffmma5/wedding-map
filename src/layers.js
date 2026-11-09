@@ -93,10 +93,16 @@ export function rippleLayer(world) {
     hand-drawn coast strays out to sea, and those wedges read as thicker ink. It has to be a layer of its own: within
     one symbol the SDK paints fills before strokes, so the water lines' wide strokes would cover the wedges. */
 export function inkLayer(world, color) {
-  return clientLayer({ title: "Coast ink", geometryType: "polygon", fields: fields(), source: coastSource(world),
-    renderer: { type: "simple", symbol: cim({ type: "CIMPolygonSymbol", symbolLayers: [
-      { type: "CIMSolidStroke", enable: true, width: 1.8, color, joinStyle: "Round" },
-      { type: "CIMSolidFill", enable: true, color }] }) } });
+  // the coastline as a stroke only (half of it hidden by the land), plus the precomputed wedges outside the land:
+  // no land-sized fill, so nothing large can flash through while the land's tiles are still being drawn
+  const lines = coastSource(world).map(g => { g.attributes.kind = "line"; return g; });
+  const wedges = (world.wedges ?? []).map(rings => new Graphic({ geometry: new Polygon({ rings: rings.map(projLine), spatialReference: SR }), attributes: { kind: "wedge" } }));
+  const source = [...lines, ...wedges].map((g, i) => { g.attributes.oid = i + 1; return g; });
+  return clientLayer({ title: "Coast ink", geometryType: "polygon", fields: fields(["kind", "string"]), source,
+    renderer: { type: "unique-value", field: "kind", uniqueValueInfos: [
+      { value: "line", symbol: cim({ type: "CIMPolygonSymbol", symbolLayers: [{ type: "CIMSolidStroke", enable: true, width: 1.8, color, joinStyle: "Round" }] }) },
+      { value: "wedge", symbol: cim({ type: "CIMPolygonSymbol", symbolLayers: [{ type: "CIMSolidFill", enable: true, color }] }) },
+    ] } });
 }
 
 export const LAND_STYLE = {

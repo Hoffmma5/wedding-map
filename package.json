@@ -1,0 +1,21 @@
+{
+  "name": "wedding-flow-map",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Everyone's coming to the Algarve: an interactive guest flow map built with the ArcGIS Maps SDK for JavaScript",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@arcgis/core": "^5.2.1",
+    "@arcgis/map-components": "^5.2.1",
+    "@esri/calcite-components": "^5.2.1"
+  },
+  "devDependencies": {
+    "vite": "^8.3.6",
+    "world-atlas": "^2.0.2"
+  }
+}

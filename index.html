@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Everyone's coming to the Algarve</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Pinyon+Script&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+
+<arcgis-map id="map" popup-component-enabled>
+  <!-- Anything placed in a slot is laid out by the map's UI, just like Esri's own components -->
+  <div slot="top-left" id="head" class="paper">
+    <div class="tiles"></div>
+    <div class="inner">
+      <div class="caps">Good people · good food · great company</div>
+      <h1>Everyone's coming<br>to the Algarve</h1>
+      <div class="script">from all over the world</div>
+      <div class="legend" id="sideLegend"></div>
+    </div>
+  </div>
+  <div slot="top-right" id="controls">
+    <calcite-button id="replay" icon-start="refresh" scale="s">Replay</calcite-button>
+    <calcite-button id="tour" icon-start="road-sign" appearance="outline" scale="s">Guest tour</calcite-button>
+  </div>
+  <arcgis-zoom slot="top-right"></arcgis-zoom>
+  <arcgis-home slot="top-right"></arcgis-home>
+  <arcgis-expand slot="bottom-left" expand-icon="legend" expand-tooltip="Legend">
+    <arcgis-legend></arcgis-legend>
+  </arcgis-expand>
+</arcgis-map>
+
+<div id="stats" class="paper">
+  <div class="stat"><b id="sGuests">0</b><span>guests</span></div>
+  <div class="stat"><b id="sCountries">0</b><span>countries</span></div>
+  <div class="stat"><b id="sKm">0</b><span>km travelled</span></div>
+</div>
+<div id="msg" class="paper"></div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

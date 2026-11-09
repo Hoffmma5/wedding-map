@@ -1,0 +1,45 @@
+rsvp_id,party_lead,party_size,side,relation,city,country,lon,lat,transport,arrival_day,note
+R001,Pedro Martins,1,B,Med school friends,Porto,Portugal,-8.61,41.15,Car,Sat,
+R002,Tiago Rodrigues,2,B,Childhood friends,Porto,Portugal,-8.61,41.15,Car,Fri,Driving down with the whole family.
+R003,Miguel Gonçalves,1,B,Med school friends,Porto,Portugal,-8.61,41.15,Train,Fri,Bringing Avó's famous cake.
+R004,Catarina Gonçalves,2,B,Childhood friends,Porto,Portugal,-8.61,41.15,Car,Fri,Will cry during the vows.
+R005,Sofia Costa,2,B,Hospital colleagues,Porto,Portugal,-8.61,41.15,Car,Sat,Will cry during the vows.
+R006,Rita Costa,2,B,Childhood friends,Porto,Portugal,-8.61,41.15,Train,Thu,Will cry during the vows.
+R007,João Costa,2,B,Childhood friends,Porto,Portugal,-8.61,41.15,Car,Thu,Driving down with the whole family.
+R008,Nuno Rodrigues,1,B,Cousins,Lisbon,Portugal,-9.14,38.72,Train,Fri,
+R009,Mariana Santos,3,B,Childhood friends,Lisbon,Portugal,-9.14,38.72,Train,Sat,Bringing Avó's famous cake.
+R010,André Pereira,1,B,Family,Lisbon,Portugal,-9.14,38.72,Car,Fri,
+R011,Mariana Sousa,3,B,Family,Lisbon,Portugal,-9.14,38.72,Car,Fri,Driving down with the whole family.
+R012,Rita Silva,1,B,Family,Lisbon,Portugal,-9.14,38.72,Car,Fri,
+R013,Diogo Sousa,3,B,Hospital colleagues,Lisbon,Portugal,-9.14,38.72,Car,Sat,Promised to learn one Czech word.
+R014,Beatriz Rodrigues,2,B,Hospital colleagues,Lisbon,Portugal,-9.14,38.72,Car,Fri,Will cry during the vows.
+R015,Ana Martins,2,B,Childhood friends,Lisbon,Portugal,-9.14,38.72,Train,Fri,Will cry during the vows.
+R016,Diogo Lopes,4,B,Cousins,Lisbon,Portugal,-9.14,38.72,Train,Thu,Bringing Avó's famous cake.
+R017,Lena Koch,4,A,University (geomatics),Munich,Germany,11.58,48.14,Plane,Sat,
+R018,Sophie Becker,2,A,University (geomatics),Munich,Germany,11.58,48.14,Plane,Fri,First time in Portugal!
+R019,Maximilian Schäfer,3,A,Family,Munich,Germany,11.58,48.14,Plane,Fri,Already practising 'obrigado'.
+R020,Sophie Becker,2,B,Hospital colleagues,Munich,Germany,11.58,48.14,Car,Fri,Will cry during the vows.
+R021,Lena Hoffmann,2,B,Childhood friends,Munich,Germany,11.58,48.14,Car,Sat,Driving down with the whole family.
+R022,Lena Becker,1,B,Family,Munich,Germany,11.58,48.14,Plane,Fri,Driving down with the whole family.
+R023,Marie Schmidt,1,A,School friends,Berlin,Germany,13.4,52.52,Plane,Thu,Already practising 'obrigado'.
+R024,Maximilian Wagner,2,A,Friends from Augsburg,Berlin,Germany,13.4,52.52,Plane,Sat,"Bringing a GPS, just in case."
+R025,Petra Marková,2,A,Family,Prague,Czechia,14.42,50.08,Car,Fri,Already practising 'obrigado'.
+R026,Veronika Králová,1,A,Friends from Augsburg,Prague,Czechia,14.42,50.08,Plane,Fri,
+R027,Veronika Horáková,2,A,Family,Prague,Czechia,14.42,50.08,Plane,Fri,"Bringing a GPS, just in case."
+R028,Barbora Beneš,2,A,School friends,Prague,Czechia,14.42,50.08,Plane,Fri,"Bringing a GPS, just in case."
+R029,Kateřina Němec,2,A,Family,Prague,Czechia,14.42,50.08,Plane,Fri,First time in Portugal!
+R030,Jakub Černá,2,A,Friends from Augsburg,Prague,Czechia,14.42,50.08,Plane,Fri,Already practising 'obrigado'.
+R031,Petra Horáková,3,A,Friends from Augsburg,Prague,Czechia,14.42,50.08,Plane,Thu,Already practising 'obrigado'.
+R032,Lucie Černá,2,A,Family,Karlovy Vary,Czechia,12.87,50.23,Plane,Fri,
+R033,Lukáš Marková,2,A,School friends,Karlovy Vary,Czechia,12.87,50.23,Car,Sat,"Bringing a GPS, just in case."
+R034,Martin Horáková,3,A,University (geomatics),Karlovy Vary,Czechia,12.87,50.23,Plane,Sat,"Bringing a GPS, just in case."
+R035,Kateřina Horáková,3,A,Friends from Augsburg,Karlovy Vary,Czechia,12.87,50.23,Plane,Fri,Will dance. Can't be stopped.
+R036,Petra Kučerová,2,A,Friends from Augsburg,Karlovy Vary,Czechia,12.87,50.23,Plane,Fri,Will dance. Can't be stopped.
+R037,David Králová,2,A,School friends,Plzeň,Czechia,13.38,49.75,Plane,Fri,
+R038,Jana Nováková,2,A,Friends from Augsburg,Plzeň,Czechia,13.38,49.75,Plane,Thu,
+R039,Lucie Kučerová,4,A,Arcdata colleagues,Brno,Czechia,16.61,49.2,Plane,Fri,
+R040,Kateřina Veselý,4,A,School friends,Brno,Czechia,16.61,49.2,Plane,Fri,
+R041,Sakura Sato,1,A,University (geomatics),Tokyo,Japan,139.69,35.69,Plane,Fri,Flying 11 000 km for this!
+R042,Andreas Christodoulou,1,B,Med school friends,Nicosia,Cyprus,33.38,35.17,Plane,Fri,Sun guaranteed – we're used to it.
+R043,Diego López,3,B,Hospital colleagues,Mexico City,Mexico,-99.13,19.43,Plane,Sat,Bringing the tequila.
+R044,Emre Demir,2,A,University (geomatics),Istanbul,Turkey,28.98,41.01,Plane,Fri,"Two of us, one suitcase of baklava."

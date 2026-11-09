@@ -100,7 +100,8 @@ loader.set(48, "Painting the coasts");
 // Two generalizations: detailed from the Europe zoom (1:20M) inwards, a calmer one for the whole-world view. The
 // land of both overlaps between 1:30M and 1:45M (the small-scale land on top), so while zooming through the switch
 // one land is always already drawn; water lines and ink switch at 1:38M, inside that overlap.
-const SWITCH = { lines: 38_000_000, landHi: 45_000_000, landLo: 30_000_000 };
+const SWITCH = { close: 12_000_000, lines: 38_000_000, landHi: 45_000_000, landLo: 30_000_000 };
+const scaleRange = (l, minScale, maxScale) => Object.assign(l, { minScale, maxScale });
 const hiSet = (l, s = SWITCH.lines) => { if (l) l.minScale = s; return l; };
 const loSet = (l, s = SWITCH.lines) => { if (l) l.maxScale = s; return l; };
 const INK = LAND_STYLE[LAND].coast;
@@ -108,8 +109,10 @@ const decor = [
   graticuleLayer(WORLD),
   waveA, waveB,
   SEA.has("contours") ? contourLayer(CONTOURS, "sea") : null,
-  // water lines: three rings from the Europe zoom inwards (a lighter copy of the inked coast), one quiet ring when zoomed out
-  hiSet(rippleLayer({ coast: WORLD.ripple })), loSet(rippleLayer(WORLD.lo, [3])),
+  // water lines by scale: three rings close in (≤ 1:12M), two around the Europe view, one quiet ring for the whole world
+  scaleRange(rippleLayer({ coast: WORLD.ripple }), SWITCH.close, 0),
+  scaleRange(rippleLayer({ coast: WORLD.ripple }, [3, 7.5]), SWITCH.lines, SWITCH.close),
+  loSet(rippleLayer(WORLD.lo, [3])),
   INK ? hiSet(inkLayer(WORLD, INK)) : null, INK ? loSet(inkLayer(WORLD.lo, INK)) : null,
   hiSet(landLayer(WORLD, LAND), SWITCH.landHi), loSet(landLoLayer(WORLD.lo, LAND), SWITCH.landLo), loSet(bordersLoLayer(WORLD.lo, LAND), SWITCH.landLo),
   needDem ? await reliefLayer(DATA.relief(PROJECTION), DATA.reliefMeta(PROJECTION), LAND_STYLE[LAND].relief) : null,

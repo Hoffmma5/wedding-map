@@ -4,3 +4,10 @@ dist/
 *.log
 __pycache__/
 data-raw/
+basemap/data/
+basemap/*.gdb/
+basemap/*.vtpk
+basemap/*.png
+basemap/*.aprx
+basemap/*.lyrx
+basemap/ImportLog/

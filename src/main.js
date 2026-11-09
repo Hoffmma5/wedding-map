@@ -33,7 +33,26 @@ import { ring, seaLayer, maskLayer, rimLayer, graticuleLayer, rippleLayer, landL
 const $ = id => document.getElementById(id);
 const fmt = n => Math.round(n).toLocaleString("en-GB").replace(/,/g, " ");
 
+// The loading screen lives in index.html (styled inline, so it shows before any bundle); here it follows the real stages.
+const loader = {
+  set(pct, step) {
+    const bar = $("loaderBar"), el = $("loader");
+    if (bar) bar.style.width = `${pct}%`;
+    if (el) el.setAttribute("aria-valuenow", String(pct));
+    if (step && $("loaderStep")) $("loaderStep").textContent = step;
+  },
+  done() {
+    const el = $("loader");
+    if (!el || el.classList.contains("done")) return;
+    this.set(100, "");
+    el.classList.add("done");
+    setTimeout(() => el.remove(), 800);
+  },
+};
+loader.set(22, "Gathering the guests");
+
 function fail(html, err) {
+  loader.done();
   $("msg").style.display = "block";
   $("msg").innerHTML = html;
   throw err;
@@ -77,6 +96,7 @@ const waveB = SEA.has("waves") && !NATIVE ? waveLayer(WORLD, 1, false) : null;
 const TIMING = import.meta.env.DEV || location.search.includes("timing");
 const mark = s => TIMING && console.info(`[timing] ${s}: ${Math.round(performance.now())} ms since page start`);
 mark("data loaded");
+loader.set(48, "Painting the coasts");
 // Two generalizations: detailed from the Europe zoom (1:20M) inwards, a calmer one for the whole-world view. The
 // land of both overlaps between 1:30M and 1:45M (the small-scale land on top), so while zooming through the switch
 // one land is always already drawn; water lines and ink switch at 1:38M, inside that overlap.
@@ -88,7 +108,8 @@ const decor = [
   graticuleLayer(WORLD),
   waveA, waveB,
   SEA.has("contours") ? contourLayer(CONTOURS, "sea") : null,
-  hiSet(rippleLayer({ coast: WORLD.ripple })), loSet(rippleLayer(WORLD.lo)),   // water lines: a lighter copy of the inked coast
+  // water lines: three rings from the Europe zoom inwards (a lighter copy of the inked coast), one quiet ring when zoomed out
+  hiSet(rippleLayer({ coast: WORLD.ripple })), loSet(rippleLayer(WORLD.lo, [3])),
   INK ? hiSet(inkLayer(WORLD, INK)) : null, INK ? loSet(inkLayer(WORLD.lo, INK)) : null,
   hiSet(landLayer(WORLD, LAND), SWITCH.landHi), loSet(landLoLayer(WORLD.lo, LAND), SWITCH.landLo), loSet(bordersLoLayer(WORLD.lo, LAND), SWITCH.landLo),
   needDem ? await reliefLayer(DATA.relief(PROJECTION), DATA.reliefMeta(PROJECTION), LAND_STYLE[LAND].relief) : null,
@@ -120,6 +141,7 @@ mapEl.highlights = [
 mapEl.map = map;
 await mapEl.viewOnReady();
 mark("view ready");
+loader.set(72, "Laying the tiles");
 const view = mapEl.view;
 if (VARIANT.rim === "tiles") canvasRim(view, geo(VENUE.lon, VENUE.lat), PLATE_R);   // azulejo rim, exact at every zoom
 if (TIMING) for (const l of map.layers) view.whenLayerView(l).then(lv => reactiveUtils.whenOnce(() => !lv.updating)).then(() => mark(`drawn: ${l.title}`));
@@ -129,7 +151,7 @@ try {
     hideActionBar: true, hideCollapseButton: true, hideFeatureNavigation: true,
     highlightEnabled: false });   // the card's city is highlighted by us, in its side's colour (see show())
 } catch (e) { console.warn("popup dock", e); }
-const HOME = { center: geo(6, 45.5), scale: 20_000_000 };   // Europe, from the Algarve to Berlin and Cyprus
+const HOME = { center: geo(VENUE.lon, VENUE.lat), scale: 14_000_000 };   // the intro ends on the orange: the venue in the middle, routes fanning out
 // the whole plate plus its rim (≈50 px), whatever the screen shape
 const worldView = () => ({ center: geo(VENUE.lon, VENUE.lat), scale: (2 * PLATE_R) / Math.max(120, Math.min(view.width, view.height) - 130) * 96 * 39.37 });
 
@@ -353,14 +375,18 @@ view.on("click", async (e) => {
 
 
 // let the layers finish their first draw before the intro starts, so the flows don't compete with tessellation
-await Promise.race([reactiveUtils.whenOnce(() => !view.updating), new Promise(r => setTimeout(r, 2500))]);
+// (and keep the loading screen up until then, so nobody sees an empty plate; never longer than 8 s)
+await Promise.race([reactiveUtils.whenOnce(() => !view.updating), new Promise(r => setTimeout(r, 8000))]);
+loader.done();
 restart();
 
 // The currents need the projection engine (several MB of WebAssembly) to go from WGS84 into the plate. Load it only
 // once the map is up, then slide the layer in under the coastlines.
 if (SEA.has("currents")) import("@arcgis/core/geometry/operators/projectOperator.js").then(m => m.load()).then(() => {
   const cur = currentsLayer(CURRENTS);
-  map.add(cur, map.layers.indexOf(map.layers.find(l => l.title === "Coastal water lines")));
+  // above the water lines (whose sea-coloured strokes would hide them near coasts), below the ink and the land
+  const lastRipple = Math.max(...map.layers.toArray().map((l, i) => (l.title === "Coastal water lines" ? i : -1)));
+  map.add(cur, lastRipple + 1);
   mark("currents added");
 }).catch(e => console.warn("currents unavailable", e));
 if (import.meta.env.DEV) window.__wedding = { mapEl, view, flows, originL, map, Point, VARIANT,

@@ -80,10 +80,10 @@ const landSource = (world) => world.countries.map(c => ({ rings: c.r.map(projLin
 const coastSource = world => world.coast.map((rings, i) => new Graphic({ geometry: new Polygon({ rings: rings.map(projLine), spatialReference: SR }), attributes: { oid: i + 1 } }));
 
 // Coastal water lines: stacked strokes drawn *under* the land
-export function rippleLayer(world) {
+export function rippleLayer(world, rings = [3, 7.5, 12]) {
   return clientLayer({ title: "Coastal water lines", geometryType: "polygon", fields: fields(), source: coastSource(world),
     renderer: { type: "simple", symbol: cim({ type: "CIMPolygonSymbol",
-      symbolLayers: [3, 7.5, 12].flatMap((d, k) => [
+      symbolLayers: rings.flatMap((d, k) => [
         { type: "CIMSolidStroke", enable: true, width: 2 * d - 0.8, color: SEA, joinStyle: "Round" },
         { type: "CIMSolidStroke", enable: true, width: 2 * d + 0.8, color: [30, 75, 184, Math.round(255 * 0.16 * (1 - k / 4))], joinStyle: "Round" },
       ]) }) } });

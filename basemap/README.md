@@ -4,12 +4,48 @@ A hand-inked, tile-inspired world basemap built from the same cartography as the
 cream land, cobalt ink coast that wanders off the land like hand-inking, soft coastal water lines,
 and a calmer generalization at small scales. Data: Natural Earth 1:50m (public domain).
 
+Two versions are built from the same project:
+
+- **Azulejo** (`Azulejo.vtpk`): land, ink coast, water lines, borders. A decorative base.
+- **Azulejo atlas** (`Azulejo_Atlas.vtpk`): the same, plus inked rivers and lakes, cities, and labels for countries,
+  cities, oceans, seas, lakes and rivers, each appearing at the zoom level Natural Earth recommends. Borders are dashed
+  in the atlas so they never get confused with rivers.
+
 ## Build
 
 ```bash
 python scripts/basemap_data.py
+python scripts/atlas_data.py
 "C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" scripts\basemap_pro.py --vtpk
 ```
+
+`atlas_data.py` needs these Natural Earth GeoJSON files in `data-raw/ne/` (from
+https://github.com/nvkelso/natural-earth-vector/tree/master/geojson): `ne_50m_rivers_lake_centerlines_scale_rank`,
+`ne_50m_lakes`, `ne_10m_populated_places_simple`, `ne_50m_admin_0_countries`, `ne_50m_geography_marine_polys`.
+Add `--atlas-only` to build just the atlas.
+
+### Label font
+
+The labels are meant to be set in **Instrument Serif** (the wedding map's title font, SIL Open Font License, so it may
+be embedded in a public basemap; the license is in `InstrumentSerif-OFL.txt`). A vector tile package embeds the glyphs of
+the fonts it uses, so Pro must be able to load the font. On machines with the Windows "block untrusted fonts" policy,
+only fonts installed **for all users** (`C:\Windows\Fonts`) can be loaded: right-click the `.ttf` files → *Install for
+all users* (needs admin rights), then rebuild with:
+
+```bash
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" scripts\basemap_pro.py --atlas-only --vtpk --font="Instrument Serif"
+```
+
+Until then the atlas uses **Avenir Next LT Pro**, which ships with ArcGIS Pro for use in maps and vector tiles.
+
+| Atlas layer | Appears from web zoom | Style |
+|---|---|---|
+| Oceans | 1 | italic spaced capitals, cobalt |
+| Seas, gulfs, straits | 3 / 5 / 6 | italic, cobalt |
+| Countries | 2–5 (Natural Earth `MIN_LABEL`) | spaced capitals, cobalt; large countries bigger |
+| Cities | 3–7 (Natural Earth `min_zoom`) | cream dot with a cobalt ring; ink-dark names, capitals larger |
+| Rivers | 2–6 | cobalt ink, 1.8 → 0.95 px; italic names along the river from zoom 4 / 6 |
+| Lakes | 2 / 4 / 5 | sea fill, inked shore; italic names from zoom 5 |
 
 1. `basemap_data.py` (shapely) writes `basemap/data/*.geojson`: the whole world evenly generalized, split at the
    date line, Antarctica included, clipped to ±85.05°.

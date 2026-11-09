@@ -98,7 +98,11 @@ mapEl.background = { color: "#efe7da" };
 const lods = Array.from({ length: 24 }, (_, level) => { const scale = 600_000_000 / 2 ** (level / 2); return { level, scale, resolution: scale / (39.37 * 96) }; });
 mapEl.constraints = { rotationEnabled: false, snapToZoom: false, lods, minScale: 600_000_000, maxScale: 250_000 };
 mapEl.extent = { xmin: -PLATE_R, ymin: -PLATE_R, xmax: PLATE_R, ymax: PLATE_R, spatialReference: SR };
-mapEl.highlights = [{ name: "default", color: "#c2541f", haloOpacity: 0.9, fillOpacity: 0.15 }];
+// one highlight group per side, so a hovered city glows in its own side's colour
+mapEl.highlights = [
+  { name: "default", color: "#c2541f", haloOpacity: 0.9, fillOpacity: 0.15 },
+  ...Object.entries(SIDES).map(([k, s]) => ({ name: `side-${k}`, color: s.color, haloOpacity: 0.9, fillOpacity: 0.15 })),
+];
 mapEl.map = map;
 await mapEl.viewOnReady();
 mark("view ready");
@@ -107,7 +111,8 @@ if (TIMING) for (const l of map.layers) view.whenLayerView(l).then(lv => reactiv
 try {
   // a clean card: no "Zoom to" action bar, no collapse or paging controls
   Object.assign(mapEl.popupElement, { dockEnabled: true, dockOptions: { buttonEnabled: false, breakpoint: false, position: "bottom-right" },
-    hideActionBar: true, hideCollapseButton: true, hideFeatureNavigation: true });
+    hideActionBar: true, hideCollapseButton: true, hideFeatureNavigation: true,
+    highlightEnabled: false });   // the card's city is highlighted by us, in its side's colour (see show())
 } catch (e) { console.warn("popup dock", e); }
 const HOME = { center: geo(6, 45.5), scale: 20_000_000 };   // Europe, from the Algarve to Berlin and Cyprus
 // the whole plate plus its rim (≈50 px), whatever the screen shape
@@ -288,6 +293,10 @@ async function hitFlow(e) {
   return r ? flows[r.graphic.attributes.fid] : null;
 }
 let shownFid = null;
+let originLV = null, hl = null;
+view.whenLayerView(originL).then(lv => { originLV = lv; });
+const clearHighlight = () => { hl?.remove(); hl = null; };
+reactiveUtils.watch(() => mapEl.popupElement?.open, open => { if (!open) clearHighlight(); });
 async function show(f, viaHover) {
   setHot(f); trip(f);
   const pe = mapEl.popupElement, isOpen = !!(pe && (pe.open ?? pe.visible));
@@ -295,11 +304,13 @@ async function show(f, viaHover) {
   const g = await featureFor(f.i);
   if (!g) return;
   shownFid = f.i; hoverPopup = viaHover;
-  mapEl.openPopup({ features: [g], location: g.geometry });
+  await mapEl.openPopup({ features: [g], location: g.geometry });
+  clearHighlight();
+  hl = originLV?.highlight(g, { name: `side-${f.o.side}` }) ?? null;
 }
-let hoverBusy = false;
-view.on("pointer-move", async (e) => {
-  if (hoverBusy || e.pointerType === "touch") return;
+// One hit test at a time, but never drop the *last* position: where the cursor comes to rest is what counts.
+let hoverBusy = false, pendingMove = null;
+async function onHover(e) {
   hoverBusy = true;
   try {
     const f = await hitFlow(e);
@@ -309,7 +320,14 @@ view.on("pointer-move", async (e) => {
       leaveTimer = null; setHot(null);
       if (hoverPopup) { mapEl.closePopup(); shownFid = null; }
     }, 900);
-  } finally { setTimeout(() => { hoverBusy = false; }, 60); }
+  } finally {
+    hoverBusy = false;
+    if (pendingMove) { const next = pendingMove; pendingMove = null; onHover(next); }
+  }
+}
+view.on("pointer-move", (e) => {
+  if (e.pointerType === "touch") return;
+  if (hoverBusy) pendingMove = e; else onHover(e);
 });
 view.on("click", async (e) => {
   e.stopPropagation();   // we open the card ourselves (routes have no popup of their own)

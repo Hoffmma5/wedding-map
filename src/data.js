@@ -35,12 +35,14 @@ export async function loadRsvps(url = DATA.rsvps) {
   });
 }
 
-/** Natural Earth 1:50m countries (flat lon/lat rings), ocean wave points, graticule. Built by scripts/world.py */
-export async function loadWorld(url = DATA.world) {
+export async function loadJson(url) {
   const res = await fetch(url);
-  if (!res.ok) throw new Error(`World: ${res.status} ${url}`);
+  if (!res.ok) throw new Error(`${res.status} ${url}`);
   return res.json();
 }
+
+/** Natural Earth 1:50m countries (flat lon/lat rings), ocean wave points, graticule. Built by scripts/world.py */
+export const loadWorld = (url = DATA.world) => loadJson(url);
 
 /** Aggregate parties to one origin per city & side */
 export function toOrigins(rsvps) {

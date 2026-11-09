@@ -17,4 +17,8 @@ const base = import.meta.env.BASE_URL;
 export const DATA = {
   rsvps: `${base}data/rsvps.csv`,
   world: `${base}data/world.json`,
+  contours: `${base}data/contours.json`,
+  relief: proj => `${base}data/relief_${proj}.png`,
+  reliefMeta: proj => `${base}data/relief_${proj}.json`,
+  currents: `${base}data/currents.json`,
 };

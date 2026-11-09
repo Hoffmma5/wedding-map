@@ -23,10 +23,12 @@
   </div>
   <div slot="top-right" id="controls">
     <calcite-button id="replay" icon-start="refresh" scale="s">Replay</calcite-button>
-    <calcite-button id="tour" icon-start="road-sign" appearance="outline" scale="s">Guest tour</calcite-button>
   </div>
   <arcgis-zoom slot="top-right"></arcgis-zoom>
   <arcgis-home slot="top-right"></arcgis-home>
+  <arcgis-expand slot="top-right" expand-icon="palette" expand-tooltip="Design variants" mode="floating">
+    <div id="design"></div>
+  </arcgis-expand>
   <arcgis-expand slot="bottom-left" expand-icon="legend" expand-tooltip="Legend">
     <arcgis-legend></arcgis-legend>
   </arcgis-expand>

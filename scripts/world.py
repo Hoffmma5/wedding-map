@@ -24,26 +24,48 @@ def ring(ids):
         p = arcs[i] if i >= 0 else arcs[~i][::-1]
         out.extend(p if not out else p[1:])
     return out
+def unwrap(pts):
+    # Natural Earth rings that cross the antimeridian (Chukotka, Wrangel, Fiji…) run along ±180° with only two
+    # vertices; on a venue-centred map that meridian is not an edge, so it would show as a straight seam.
+    # Move the western half by +360° so the ring is continuous (the projection handles lon > 180°).
+    if any(x >= 170 for x, _ in pts) and any(x <= -170 for x, _ in pts):
+        return [(x + 360 if x < 0 else x, y) for x, y in pts]
+    return pts
 countries = []; polys_all = []
 for g in t['objects']['countries']['geometries']:
     name = g['properties']['name']
     if name == 'Antarctica': continue
     parts = [g['arcs']] if g['type'] == 'Polygon' else g.get('arcs', []) if g['type'] == 'MultiPolygon' else []
-    rings_out = []
+    rings_out = []; kept = []
     for poly in parts:
-        rr = [ring(r) for r in poly]
+        rr = [unwrap(ring(r)) for r in poly]
         if any(angdist(*p) > 158 for p in rr[0]): continue
         shp = Polygon(rr[0], rr[1:]).buffer(0)
         if shp.is_empty: continue
         near = max(angdist(*p) for p in rr[0]) < 45
         if shp.area < (0.0006 if near else 0.08): continue
         polys_all.append(shp)
-        s = shp.simplify(0.02 if near else 0.12, preserve_topology=True)
-        for geom in (s.geoms if isinstance(s, MultiPolygon) else [s]):
-            for rg in [geom.exterior] + list(geom.interiors):
-                c = [round(v, 2) for xy in rg.coords for v in xy]
-                if len(c) >= 8: rings_out.append(c)
+        kept.append(shp)
+    for shp in kept:
+        for part in (shp.geoms if isinstance(shp, MultiPolygon) else [shp]):
+            near = max(angdist(*p) for p in part.exterior.coords) < 45
+            s = part.simplify(0.02 if near else 0.12, preserve_topology=True)
+            for geom in (s.geoms if isinstance(s, MultiPolygon) else [s]):
+                for rg in [geom.exterior] + list(geom.interiors):
+                    c = [round(v, 2) for xy in rg.coords for v in xy]
+                    if len(c) >= 8: rings_out.append(c)
     if rings_out: countries.append({'n': name, 'r': rings_out})
+# dissolved coastline (no internal borders) for the coastal water lines: half the edges, nothing hidden under land
+coast = []
+cu = unary_union([p.buffer(0.01) for p in polys_all]).buffer(-0.01)
+for part in (cu.geoms if isinstance(cu, MultiPolygon) else [cu]):
+    if part.area < 0.004: continue
+    near = max(angdist(*p) for p in part.exterior.coords) < 45
+    s = part.simplify(0.03 if near else 0.12, preserve_topology=True)
+    for geom in (s.geoms if isinstance(s, MultiPolygon) else [s]):
+        for rg in [geom.exterior] + [i for i in geom.interiors if Polygon(i).area > 0.05]:
+            c = [round(v, 2) for xy in rg.coords for v in xy]
+            if len(c) >= 8: coast.append(c)
 land = unary_union(polys_all).buffer(0.9)
 # waves on an even grid in venue-centred LAEA
 fwd = Transformer.from_crs('EPSG:4326', f'+proj=laea +lat_0={VLAT} +lon_0={VLON} +datum=WGS84 +units=m', always_xy=True)
@@ -73,5 +95,5 @@ def add_line(pts):
     if len(seg) > 1: grat.append(seg)
 for lon in range(-180, 180, 15): add_line([(lon, lat) for lat in range(-80, 81, 2)])
 for lat in range(-75, 76, 15): add_line([(lon, lat) for lon in range(-180, 181, 2)])
-json.dump({'countries': countries, 'waves': waves, 'grat': grat}, open(OUT, 'w'), separators=(',', ':'))
-print(len(countries), 'countries', len(waves), 'waves', len(grat), 'grat lines', OUT.stat().st_size//1024, 'KB')
+json.dump({'countries': countries, 'coast': coast, 'waves': waves, 'grat': grat}, open(OUT, 'w'), separators=(',', ':'))
+print(len(countries), 'countries', len(coast), 'coast rings', len(waves), 'waves', len(grat), 'grat lines', OUT.stat().st_size//1024, 'KB')

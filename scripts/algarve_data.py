@@ -137,6 +137,43 @@ def smooth_area(p):
     return unary_union(res) if res else Polygon()
 
 
+# ---- small-scale versions (web zoom 8–9 and 10–11): the full geometry is far too detailed there ------------------------
+# rivers get a stronger simplification than roads: their meanders are wide (500–800 m) and would survive a light one
+GEN = {"g1": dict(line_tol=500, river_tol=900, water_r=400, water_tol=150), "g2": dict(line_tol=280, river_tol=450, water_r=140, water_tol=60)}
+
+
+def gen_lines(items, keep, tol, group):
+    """merge the lines of each group (road class, river name) into long strokes, simplify them strongly and round the
+    corners again: no meanders and kinks smaller than the scale can show"""
+    groups = defaultdict(list)
+    for g, a in items:
+        if keep(a): groups[tuple(a[k] for k in group)].append(g)
+    out = []
+    for k, gs in groups.items():
+        for l in parts(linemerge(parts(unary_union(gs)))):   # (a list: linemerge refuses a single line)
+            if l.geom_type != "LineString": continue
+            if l.length < tol * 2:   # short pieces between junctions stay (dropping them breaks the road), just unsimplified
+                out.append((l, dict(zip(group, k)))); continue
+            s = l.simplify(tol)
+            s = LineString(chaikin(list(s.coords), 2, closed=False)).simplify(tol * 0.08)
+            out.append((s, dict(zip(group, k))))
+    return out
+
+
+def gen_water(polys, r, tol):
+    """lakes and reservoirs for small scales: an opening (shrink, then grow) removes arms narrower than 2r, then the
+    outline is simplified and rounded"""
+    opened = unary_union(polys).buffer(-r, quad_segs=4).buffer(r, quad_segs=4)
+    out = []
+    for p in parts(opened):
+        if p.geom_type != "Polygon" or p.area < (3 * r) ** 2: continue
+        s = p.simplify(tol, preserve_topology=True)
+        for q in parts(s):
+            if q.geom_type == "Polygon":
+                out.append(Polygon(chaikin(list(q.exterior.coords), 2, True)).buffer(0))
+    return [(g, {"label": ""}) for g in out if not g.is_empty]
+
+
 def by_area(a, steps):
     """zoom level from an area (m², Web Mercator): steps = [(min area, zoom), …] from large to small"""
     for threshold, z in steps:
@@ -241,6 +278,8 @@ def roads():
             if p.geom_type == "LineString":
                 items.append((p, {"cls": "motorway", "min_zoom": 8, "label": "", "ref": el.get("tags", {}).get("ref") or ""}))
     save("roads", smooth_lines(items), "line")
+    save("roads_g1", gen_lines(items, lambda a: a["min_zoom"] <= 9, GEN["g1"]["line_tol"], ("cls",)), "line")
+    save("roads_g2", gen_lines(items, lambda a: a["min_zoom"] <= 11 and a["cls"] != "minor", GEN["g2"]["line_tol"], ("cls",)), "line")
     rails = [(p, {"label": ""}) for el in load("railways") for l in [way_line(el)] if l for p in parts(merc(l).intersection(DETAIL)) if p.geom_type == "LineString"]
     save("railways", smooth_lines(rails, tol=5.0), "line")
 
@@ -329,6 +368,10 @@ def water_and_land_cover(land3):
     # rivers and streams: cut where they run through a lake or reservoir (the water body is drawn instead), smoothed;
     # rivers appear by their total length, streams only close in, very short ones not at all
     lakes = [g for g, a in water if a["kind"] == "lake"]   # not the river's own bed (water=river), or the river would break up
+    water_g = {}
+    for name, maxz in (("g1", 9), ("g2", 11)):
+        water_g[name] = gen_water([g for g, a in water if a["min_zoom"] <= maxz], GEN[name]["water_r"], GEN[name]["water_tol"])
+        save(f"water_{name}", water_g[name], "polygon")
     tree = shapely.STRtree(lakes)
     lines = []
     for el in load("waterways"):
@@ -342,6 +385,11 @@ def water_and_land_cover(land3):
             for q in parts(p):
                 if q.geom_type == "LineString" and q.length > 30:
                     lines.append((q, {"cls": "river" if ww == "river" else "stream", "label": t.get("name") or "", "min_zoom": 0}))
+    raw_rivers = []   # uncut, for the small-scale versions (cut by the generalized lakes instead)
+    for el in load("waterways"):
+        t = el.get("tags", {}); l = way_line(el)
+        if l is None or t.get("waterway") != "river": continue
+        raw_rivers += [(p, {"cls": "river", "label": t.get("name") or ""}) for p in parts(merc(l).intersection(DETAIL)) if p.geom_type == "LineString"]
     total = defaultdict(float)
     for g, a in lines:
         if a["cls"] == "river" and a["label"]: total[a["label"]] += g.length
@@ -353,6 +401,12 @@ def water_and_land_cover(land3):
             a["min_zoom"] = 15 if g.length > 600 else 16
     lines = [(g, a) for g, a in lines if not (a["cls"] == "stream" and g.length < 150)]
     save("waterways", smooth_lines(lines), "line")
+    for name, maxz in (("g1", 8), ("g2", 10)):
+        keep_names = {n for n, length in total.items() if (8 if length > 40e3 else 10 if length > 10e3 else 12) <= maxz}
+        rivers = gen_lines(raw_rivers, lambda a: a["label"] in keep_names, GEN[name]["river_tol"], ("cls", "label"))
+        lakes_g = unary_union([g for g, _ in water_g[name]])
+        cut = [(q, a) for g, a in rivers for q in parts(g.difference(lakes_g)) if q.geom_type == "LineString" and q.length > 200]
+        save(f"waterways_{name}", cut, "line")
 
 
 if __name__ == "__main__":

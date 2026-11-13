@@ -99,20 +99,30 @@ def add_layers(m):
         "tertiary": [(11, 13, 1.2, 2.2, 35), (14, 14, 3.4, 4.7, 45), (15, None, 6.2, 8.0, 50)],
         "minor": [(13, 13, 0.9, 1.7, 25), (14, 14, 2.4, 3.5, 35), (15, None, 5.2, 6.8, 40)],
     }
+    # the geometry comes from the small-scale versions at zoom 8–9 (roads_g1) and 10–11 (roads_g2), in full from 12
+    sources = [("roads_g1", 8, 9), ("roads_g2", 10, 11), ("roads", 12, None)]
     for cls in ("motorway", "primary", "secondary", "tertiary", "minor"):
         fill_rgb = TERRA if cls == "motorway" else WHITE
         for z0, z1, fw, cw, ca in reversed(widths[cls]):
-            tag = f"z{z0}" + (f"-{z1}" if z1 else "+")
-            lay.append(zr(style(add("roads"), road(fill_rgb, fw, cw, ca), "r"), f"Roads: {cls} ({tag})", z0, z1,
-                          where=f"cls = '{cls}' AND min_zoom <= {z1 if z1 else 20}"))
+            for fc, s0, s1 in reversed(sources):
+                a, b = max(z0, s0), min(z1 if z1 else 99, s1 if s1 else 99)
+                if a > b: continue
+                b = None if b == 99 else b
+                where = f"cls = '{cls}'" + (f" AND min_zoom <= {b if b else 20}" if fc == "roads" else "")
+                lay.append(zr(style(add(fc), road(fill_rgb, fw, cw, ca), "r"), f"Roads: {cls} (z{a}" + (f"-{b})" if b else "+)"), a, b, where=where))
     lay.append(zr(style(add("borders"), symbol("line", [dashed(stroke(0.6, COBALT, 60))]), "r"), "Country borders", 8, 12))   # as the atlas
     lay.append(zr(style(add("railways"), symbol("line", [dashed(stroke(0.8, CREAM), (3, 3)), stroke(1.8, INK, 70)]), "r"), "Railways", 10))
 
     # ---- water bodies above the rivers: a river ends at the shore of the lake it flows into ------------------------
-    lay += by_zoom(add, "water", "Lakes & reservoirs", lambda: symbol("polygon", [stroke(0.9, COBALT, INK_ALPHA), fill(SEA)]), (8, 10, 12, 14, 15, 16))
-    river_w = {8: 1.4, 10: 1.1, 12: 0.9}
-    lay += [zr(style(add("waterways"), symbol("line", [stroke(w, COBALT, INK_ALPHA)]), "r"), f"Rivers (z{z})", z, where=f"cls = 'river' AND min_zoom = {z}")
-            for z, w in river_w.items()]
+    # small scales: generalized lakes without outline; closer in the full shapes with a soft outline
+    soft_water = lambda: symbol("polygon", [stroke(0.6, COBALT, 35), fill(SEA)])
+    lay.append(zr(style(add("water_g1"), symbol("polygon", [fill(SEA)]), "r"), "Lakes & reservoirs (z8-9)", 8, 9))
+    lay.append(zr(style(add("water_g2"), symbol("polygon", [fill(SEA)]), "r"), "Lakes & reservoirs (z10-11)", 10, 11))
+    lay.append(zr(style(add("water"), soft_water(), "r"), "Lakes & reservoirs (z12)", 12, where="min_zoom <= 12"))
+    lay += by_zoom(add, "water", "Lakes & reservoirs", soft_water, (14, 15, 16))
+    lay.append(zr(style(add("waterways_g1"), symbol("line", [stroke(1.3, COBALT, INK_ALPHA)]), "r"), "Rivers (z8-9)", 8, 9))
+    lay.append(zr(style(add("waterways_g2"), symbol("line", [stroke(1.15, COBALT, INK_ALPHA)]), "r"), "Rivers (z10-11)", 10, 11))
+    lay.append(zr(style(add("waterways"), symbol("line", [stroke(1.0, COBALT, INK_ALPHA)]), "r"), "Rivers (z12+)", 12, where="cls = 'river' AND min_zoom <= 12"))
     lay += by_zoom(add, "waterways", "Streams", lambda: symbol("line", [stroke(0.7, COBALT, 70)]), (15, 16), where="cls = 'stream'")
 
     # ---- land cover on the land ------------------------------------------------------------------------------------

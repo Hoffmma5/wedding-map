@@ -17,8 +17,9 @@ from generalize import ROOT
 
 PBF = ROOT / "data-raw/pbf/portugal-latest.osm.pbf"
 OUT = ROOT / "data-raw/osm"
-S, W, N, E = 36.90, -9.05, 37.65, -7.25            # the detail frame (same as algarve_fetch.DETAIL)
-SPAIN = (36.90, -7.46, 37.65, -7.25)               # east of the Guadiana
+S, W, N, E = 36.90, -9.05, 38.35, -7.25            # the detail frame: the Algarve and south Alentejo (as algarve_data.DETAIL)
+SPAIN = (36.90, -7.46, 38.35, -7.25)               # east of the Guadiana
+SPAIN_CACHE = ROOT / "data-raw/osm/_spain_strip.json"
 
 HIGHWAYS = {"motorway", "trunk", "primary", "secondary", "tertiary", "motorway_link", "trunk_link", "primary_link",
             "secondary_link", "tertiary_link", "unclassified", "residential", "living_street", "pedestrian"}
@@ -85,11 +86,15 @@ SPANISH_STRIP = ('(way["highway"~"^(' + "|".join(sorted(HIGHWAYS)) + ')$"]({bbox
 
 def add_spain(layers):
     """the Spanish bank of the Guadiana (Ayamonte, Isla Cristina): one small Overpass query"""
-    try:
-        els = query("Spanish strip", SPAIN, SPANISH_STRIP)
-    except SystemExit as e:
-        print(f"  skipped the Spanish strip ({e})")
-        return
+    if SPAIN_CACHE.exists():
+        els = json.loads(SPAIN_CACHE.read_text(encoding="utf-8"))
+    else:
+        try:
+            els = query("Spanish strip", SPAIN, SPANISH_STRIP)
+            SPAIN_CACHE.write_text(json.dumps(els), encoding="utf-8")
+        except SystemExit as e:
+            print(f"  skipped the Spanish strip ({e})")
+            return
     for el in els:
         t = el.get("tags", {})
         if el["type"] == "node":

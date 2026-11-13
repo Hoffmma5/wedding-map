@@ -113,3 +113,28 @@ from Overpass, tile by tile, and can fetch everything else too when Overpass is 
   in ink, road names from zoom 13, street names from 15, river names in italics, peaks with their height.
 - **Credits**: *© OpenStreetMap contributors (ODbL); Natural Earth*. OpenStreetMap data is open under the ODbL: keep
   the attribution on any map using this basemap.
+
+## Azulejo complete (one basemap, world to street level)
+
+**`Azulejo_Complete.vtpk`** merges the atlas and the Algarve into one package: the world atlas (Natural Earth) up
+to web zoom 7, the Algarve and south Alentejo (OpenStreetMap) from zoom 8 (1:2.3M) to street level.
+
+```bash
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" scripts\complete_pro.py --vtpk
+```
+
+(after the atlas and Algarve data and geodatabases are built, see above). The switch at zoom 8 is harmonized:
+the same cream, inked coast and three water lines on both sides, the same dashed borders, town names in the same
+type, and the main rivers continue from the atlas into the detailed data.
+
+Large-scale cartography in the Algarve layers:
+
+- **Everything smoothed** like the ink coast: roads, rivers, lakes, beaches, wetlands, parks and woods are simplified
+  and their corners rounded (Chaikin). Roads and rivers are split at their junctions first, so junctions stay exact.
+- **Rivers end at the shore** of the lakes and reservoirs they flow through (their centrelines are cut there), and water
+  bodies are drawn above rivers. A river's own mapped bed (water=river) does not cut it.
+- **Size decides the zoom**: lakes and ponds appear at zoom 10 / 12 / 14 / 15 / 16 by area, woods, parks, beaches and
+  wetlands likewise; streams only from zoom 15 (short ones from 16, very short ones never); rivers by their total
+  length (zoom 8 / 10 / 12).
+- **Detail area**: the Algarve and south Alentejo up to 38.35°N (past Beja), plus the Spanish bank of the Guadiana,
+  so the 1:2M view shows no gap north of the Algarve.

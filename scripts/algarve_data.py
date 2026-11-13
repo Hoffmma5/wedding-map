@@ -9,6 +9,7 @@ own hand-inked copy (the same idea as the world basemaps: ink = land ∪ a coars
 with the ink's wobble scaled to the band so it stays subtle at street level.
 """
 import json
+from collections import Counter, defaultdict
 import numpy as np
 import shapely
 from pyproj import Transformer
@@ -34,8 +35,8 @@ def bbox_m(s, w, n, e):
 
 
 CONTEXT = bbox_m(35.00, -11.50, 40.00, -4.50)
-MID = bbox_m(36.55, -9.70, 38.05, -6.60)
-DETAIL = bbox_m(36.90, -9.05, 37.65, -7.25)
+MID = bbox_m(36.55, -9.70, 38.75, -6.60)
+DETAIL = bbox_m(36.90, -9.05, 38.35, -7.25)   # the Algarve and south Alentejo: no gap in the 1:2M view
 
 
 def load(name):
@@ -98,6 +99,49 @@ def save(name, items, kind):
 
 def parts(g):
     return [p for p in getattr(g, "geoms", [g]) if not p.is_empty]
+
+
+# ---- the ink look for every line and area: simplify, then round the corners (Chaikin) --------------------------------
+def key(xy):
+    return (round(xy[0], 1), round(xy[1], 1))
+
+
+def smooth_lines(items, tol=3.0):
+    """Smooth a network of lines without pulling junctions apart: every line is split at the vertices it shares with
+    another line (and at its ends), and each piece is smoothed with its end points fixed."""
+    count = Counter(key(c) for g, _ in items for c in g.coords)
+    out = []
+    for g, a in items:
+        coords = list(g.coords)
+        cut = [0] + [i for i in range(1, len(coords) - 1) if count[key(coords[i])] > 1] + [len(coords) - 1]
+        for i0, i1 in zip(cut, cut[1:]):
+            piece = coords[i0:i1 + 1]
+            if len(piece) >= 3:
+                piece = list(LineString(piece).simplify(tol).coords)
+                piece = chaikin(piece, 2, closed=False)
+                piece = list(LineString(piece).simplify(tol * 0.15).coords)
+            if len(piece) >= 2:
+                out.append((LineString(piece), a))
+    return out
+
+
+def smooth_area(p):
+    """simplify by a tolerance that grows with the area's size, then two rounds of corner cutting"""
+    tol = min(15.0, max(1.5, p.area ** 0.5 / 150))
+    s = p.simplify(tol, preserve_topology=True)
+    res = []
+    for q in parts(s):
+        if q.geom_type != "Polygon": continue
+        r = Polygon(chaikin(list(q.exterior.coords), 2, True), [chaikin(list(i.coords), 2, True) for i in q.interiors]).buffer(0)
+        res.append(r.simplify(tol * 0.2, preserve_topology=True))
+    return unary_union(res) if res else Polygon()
+
+
+def by_area(a, steps):
+    """zoom level from an area (m², Web Mercator): steps = [(min area, zoom), …] from large to small"""
+    for threshold, z in steps:
+        if a >= threshold: return z
+    return steps[-1][1]
 
 
 # ---- land from the coastline ----------------------------------------------------------------------------------------
@@ -196,9 +240,9 @@ def roads():
         for p in parts(g):
             if p.geom_type == "LineString":
                 items.append((p, {"cls": "motorway", "min_zoom": 8, "label": "", "ref": el.get("tags", {}).get("ref") or ""}))
-    save("roads", items, "line")
+    save("roads", smooth_lines(items), "line")
     rails = [(p, {"label": ""}) for el in load("railways") for l in [way_line(el)] if l for p in parts(merc(l).intersection(DETAIL)) if p.geom_type == "LineString"]
-    save("railways", rails, "line")
+    save("railways", smooth_lines(rails, tol=5.0), "line")
 
 
 PLACE_ZOOM = {"city": 8, "town": 9, "village": 11, "suburb": 13, "hamlet": 13, "neighbourhood": 15, "locality": 15, "island": 12}
@@ -247,39 +291,68 @@ def areas(src, attrs_of, min_area, frame=DETAIL):
         if a is None: continue
         for p in parts(g):
             if p.geom_type in ("Polygon", "MultiPolygon") and p.area >= min_area:
-                items.append((p.simplify(2), a))
+                s = smooth_area(p)
+                if not s.is_empty:
+                    items.append((s, {**a, "min_zoom": a["zoom_of"](p.area)} if "zoom_of" in a else a))
+    for _, a in items: a.pop("zoom_of", None)
     return items
 
 
+# zoom levels by size: small things only appear when there is room for them (no speckle of ponds and bits of wood)
+WATER_ZOOM = [(1.5e7, 8), (2e6, 10), (3e5, 12), (5e4, 14), (1e4, 15), (0, 16)]   # big reservoirs from zoom 8, with their rivers
+WET_ZOOM = [(1e6, 10), (1e5, 12), (1e4, 14), (0, 15)]
+BEACH_ZOOM = [(2e5, 11), (2e4, 13), (0, 14)]
+WOOD_ZOOM = [(3e6, 11), (3e5, 13), (5e4, 14), (0, 15)]
+PARK_ZOOM = [(2e5, 12), (2e4, 14), (0, 15)]
+
+
 def water_and_land_cover(land3):
-    def water_attrs(t, g):
-        return {"label": t.get("name") or "", "min_zoom": 10 if g.area > 2e6 else 12 if g.area > 1e5 else 14}
-    save("water", areas("water", water_attrs, 500), "polygon")
+    RIVER_BED = ("river", "canal", "stream", "oxbow", "rapids")
+    water = areas("water", lambda t, g: {"label": t.get("name") or "", "kind": "river" if t.get("water") in RIVER_BED else "lake",
+                                         "zoom_of": lambda a: by_area(a, WATER_ZOOM)}, 500)
+    save("water", water, "polygon")
     # beaches are drawn on top of the sea too (sandbanks), but only where OSM maps them
-    save("beaches", areas("beaches", lambda t, g: {"label": t.get("name") or "", "min_zoom": 11 if g.area > 2e5 else 13}, 200), "polygon")
+    save("beaches", areas("beaches", lambda t, g: {"label": t.get("name") or "", "zoom_of": lambda a: by_area(a, BEACH_ZOOM)}, 200), "polygon")
 
     def wet_attrs(t, g):
         kind = t.get("wetland", "")
         cls = "tidal" if kind in ("tidalflat", "saltmarsh", "saltern", "mangrove") else "marsh"
-        return {"cls": cls, "min_zoom": 10 if g.area > 1e6 else 12}
+        return {"cls": cls, "zoom_of": lambda a: by_area(a, WET_ZOOM)}
     save("wetlands", areas("wetlands", wet_attrs, 2000), "polygon")
 
     def green_attrs(t, g):
-        if t.get("leisure") == "golf_course": cls, z = "golf", 11
-        elif t.get("leisure") in ("park", "nature_reserve"): cls, z = "park", 12 if g.area > 2e5 else 14
-        else: cls, z = "wood", 11 if g.area > 1e6 else 13
-        return {"cls": cls, "label": t.get("name") or "", "min_zoom": z}
+        if t.get("leisure") == "golf_course": return {"cls": "golf", "label": t.get("name") or "", "min_zoom": 11}
+        if t.get("leisure") in ("park", "nature_reserve"): return {"cls": "park", "label": t.get("name") or "", "zoom_of": lambda a: by_area(a, PARK_ZOOM)}
+        return {"cls": "wood", "label": t.get("name") or "", "zoom_of": lambda a: by_area(a, WOOD_ZOOM)}
     save("greens", areas("greens", green_attrs, 2000), "polygon")
 
-    items = []
+    # rivers and streams: cut where they run through a lake or reservoir (the water body is drawn instead), smoothed;
+    # rivers appear by their total length, streams only close in, very short ones not at all
+    lakes = [g for g, a in water if a["kind"] == "lake"]   # not the river's own bed (water=river), or the river would break up
+    tree = shapely.STRtree(lakes)
+    lines = []
     for el in load("waterways"):
         t = el.get("tags", {}); l = way_line(el)
         if l is None: continue
         ww = t.get("waterway")
         for p in parts(merc(l).intersection(DETAIL)):
-            if p.geom_type == "LineString":
-                items.append((p, {"cls": "river" if ww == "river" else "stream", "min_zoom": 10 if ww == "river" else 13, "label": t.get("name") or ""}))
-    save("waterways", items, "line")
+            if p.geom_type != "LineString": continue
+            hits = [lakes[i] for i in tree.query(p, predicate="intersects")]
+            if hits: p = p.difference(unary_union(hits))
+            for q in parts(p):
+                if q.geom_type == "LineString" and q.length > 30:
+                    lines.append((q, {"cls": "river" if ww == "river" else "stream", "label": t.get("name") or "", "min_zoom": 0}))
+    total = defaultdict(float)
+    for g, a in lines:
+        if a["cls"] == "river" and a["label"]: total[a["label"]] += g.length
+    for g, a in lines:
+        if a["cls"] == "river":
+            n = total.get(a["label"], 0)
+            a["min_zoom"] = 8 if n > 40e3 else 10 if n > 10e3 else 12
+        else:
+            a["min_zoom"] = 15 if g.length > 600 else 16
+    lines = [(g, a) for g, a in lines if not (a["cls"] == "stream" and g.length < 150)]
+    save("waterways", smooth_lines(lines), "line")
 
 
 if __name__ == "__main__":

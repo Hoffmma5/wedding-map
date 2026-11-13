@@ -60,33 +60,38 @@ def water_lines(rings):
     return symbol("line", layers)
 
 
-def build_map(aprx):
-    m = aprx.createMap("Azulejo Algarve", "MAP")
-    for lyr in m.listLayers(): m.removeLayer(lyr)
-    m.spatialReference = WEB_MERCATOR
+def by_zoom(add, fc, name, sym, zooms, where=None):
+    """one layer per zoom level a feature appears at (its min_zoom): small features only show once there is room"""
+    out = []
+    for z in zooms:
+        q = f"min_zoom = {z}" + (f" AND ({where})" if where else "")
+        out.append(zr(style(add(fc), sym(), "r"), f"{name} (z{z})", z, where=q))
+    return out
+
+
+def add_layers(m):
+    """the Algarve layers (web zoom 8 and larger), stacked top → bottom in map m"""
     add = lambda fc: m.addDataFromPath(str(GDB / fc))
     lay = []   # top → bottom
 
-    # ---- labels -------------------------------------------------------------------------------------------------
-    place_classes = [("Cities", "kind = 'city'", 13.0, 8, 25.0), ("Towns", "kind = 'town'", 11.0, 9, 12.0),
-                     ("Villages", "kind = 'village' OR kind = 'island'", 9.5, 11, 0.0), ("Suburbs & hamlets", "kind IN ('suburb', 'hamlet')", 8.5, 13, 0.0),
-                     ("Neighbourhoods", "kind IN ('neighbourhood', 'locality')", 8.0, 15, 0.0)]
-    for n, q, size, z, spacing in place_classes:
-        upper = z <= 9
-        lay.append(zr(labels(points(add("places"), visible=False),
-                             [(n, None, size, INK if not upper else COBALT, 100 if not upper else 85, False, CREAM, spacing, 1 if upper else 3)],
-                             on_top=True), f"Place labels: {n.lower()}", z, where=q))
-    lay.append(zr(labels(points(add("peaks"), visible=False), [("Peaks", None, 8.0, OLIVE, 100, True, CREAM, 0.0, 5)], on_top=True), "Peak labels", 12))
+    # ---- labels (same type and colours as the atlas, so towns read the same on both sides of the switch at zoom 8)
+    place_classes = [("Cities", "kind = 'city'", 10.5, 8, 1), ("Towns", "kind = 'town'", 9.5, 9, 2),
+                     ("Villages", "kind = 'village' OR kind = 'island'", 9.0, 11, 3), ("Suburbs & hamlets", "kind IN ('suburb', 'hamlet')", 8.5, 13, 4),
+                     ("Neighbourhoods", "kind IN ('neighbourhood', 'locality')", 8.0, 15, 5)]
+    for n, q, size, z, prio in place_classes:
+        lay.append(zr(labels(points(add("places"), visible=False), [(n, None, size, INK, 100, False, CREAM, 0.0, prio)], on_top=True),
+                      f"Place labels: {n.lower()}", z, where=q))
+    lay.append(zr(labels(points(add("peaks"), visible=False), [("Peaks", None, 8.0, OLIVE, 100, True, CREAM, 0.0, 6)], on_top=True), "Peak labels", 12))
     lay.append(zr(labels(style(add("roads"), symbol("line", [stroke(0.5, COBALT, 0)]), "Street names"),
-                         [("Streets", None, 8.0, INK, 85, False, WHITE, 0.0, 7)], kind="line"), "Street names", 15, where="label <> ''"))
+                         [("Streets", None, 8.0, INK, 85, False, WHITE, 0.0, 8)], kind="line"), "Street names", 15, where="label <> ''"))
     lay.append(zr(labels(style(add("roads"), symbol("line", [stroke(0.5, COBALT, 0)]), "Road names"),
-                         [("Roads", None, 8.5, INK, 85, False, WHITE, 0.0, 6)], kind="line"), "Road names", 13,
+                         [("Roads", None, 8.5, INK, 85, False, WHITE, 0.0, 7)], kind="line"), "Road names", 13,
                   where="label <> '' AND cls IN ('primary', 'secondary', 'tertiary')"))
     lay.append(zr(labels(style(add("waterways"), symbol("line", [stroke(0.5, COBALT, 0)]), "River names"),
                          [("Rivers", None, 8.5, COBALT, 90, True, CREAM, 0.0, 6)], kind="line"), "River names", 12,
                   where="label <> '' AND cls = 'river'"))
 
-    # ---- roads (motorway on top) and railways ------------------------------------------------------------------------
+    # ---- roads (motorway on top) and railways --------------------------------------------------------------------
     widths = {   # class: [(z_from, z_to, fill px, casing px, casing alpha)]
         "motorway": [(8, 10, 1.5, 0, 0), (11, 13, 2.8, 4.2, 75), (14, 14, 5.5, 7.5, 80), (15, None, 9.0, 11.5, 85)],
         "primary": [(9, 10, 1.0, 1.9, 45), (11, 13, 2.0, 3.2, 50), (14, 14, 4.6, 6.2, 55), (15, None, 8.0, 10.2, 60)],
@@ -97,24 +102,27 @@ def build_map(aprx):
     for cls in ("motorway", "primary", "secondary", "tertiary", "minor"):
         fill_rgb = TERRA if cls == "motorway" else WHITE
         for z0, z1, fw, cw, ca in reversed(widths[cls]):
-            tag = f"z{z0}" + (f"–{z1}" if z1 else "+")
+            tag = f"z{z0}" + (f"-{z1}" if z1 else "+")
             lay.append(zr(style(add("roads"), road(fill_rgb, fw, cw, ca), "r"), f"Roads: {cls} ({tag})", z0, z1,
                           where=f"cls = '{cls}' AND min_zoom <= {z1 if z1 else 20}"))
-    lay.append(zr(style(add("borders"), symbol("line", [dashed(stroke(1.0, COBALT, 70), (4, 2.5))]), "r"), "Country borders", 8, 12))
+    lay.append(zr(style(add("borders"), symbol("line", [dashed(stroke(0.6, COBALT, 60))]), "r"), "Country borders", 8, 12))   # as the atlas
     lay.append(zr(style(add("railways"), symbol("line", [dashed(stroke(0.8, CREAM), (3, 3)), stroke(1.8, INK, 70)]), "r"), "Railways", 10))
-    lay.append(zr(style(add("waterways"), symbol("line", [stroke(1.4, COBALT, INK_ALPHA)]), "r"), "Rivers", 10, where="cls = 'river'"))
-    lay.append(zr(style(add("waterways"), symbol("line", [stroke(0.8, COBALT, 70)]), "r"), "Streams", 13, where="cls = 'stream'"))
 
-    # ---- land cover on the land --------------------------------------------------------------------------------------
-    lay.append(zr(style(add("water"), symbol("polygon", [stroke(0.9, COBALT, 70), fill(SEA)]), "r"), "Water (detail)", 13))
-    lay.append(zr(style(add("water"), symbol("polygon", [fill(SEA)]), "r"), "Water", 10, 12, where="min_zoom <= 12"))
-    lay.append(zr(style(add("wetlands"), symbol("polygon", [fill(TIDAL)]), "r"), "Tidal flats & marsh", 10, where="min_zoom <= 12 OR cls = 'tidal'"))
-    lay.append(zr(style(add("beaches"), symbol("polygon", [stroke(0.6, (214, 180, 120)), fill(SAND)]), "r"), "Beaches", 11))
+    # ---- water bodies above the rivers: a river ends at the shore of the lake it flows into ------------------------
+    lay += by_zoom(add, "water", "Lakes & reservoirs", lambda: symbol("polygon", [stroke(0.9, COBALT, INK_ALPHA), fill(SEA)]), (8, 10, 12, 14, 15, 16))
+    river_w = {8: 1.4, 10: 1.1, 12: 0.9}
+    lay += [zr(style(add("waterways"), symbol("line", [stroke(w, COBALT, INK_ALPHA)]), "r"), f"Rivers (z{z})", z, where=f"cls = 'river' AND min_zoom = {z}")
+            for z, w in river_w.items()]
+    lay += by_zoom(add, "waterways", "Streams", lambda: symbol("line", [stroke(0.7, COBALT, 70)]), (15, 16), where="cls = 'stream'")
+
+    # ---- land cover on the land ------------------------------------------------------------------------------------
+    lay += by_zoom(add, "wetlands", "Tidal flats & marsh", lambda: symbol("polygon", [fill(TIDAL)]), (10, 12, 14, 15))
+    lay += by_zoom(add, "beaches", "Beaches", lambda: symbol("polygon", [stroke(0.6, (214, 180, 120)), fill(SAND)]), (11, 13, 14))
     lay.append(zr(style(add("greens"), symbol("polygon", [fill(GOLF)]), "r"), "Golf courses", 11, where="cls = 'golf'"))
-    lay.append(zr(style(add("greens"), symbol("polygon", [fill(PARK)]), "r"), "Parks", 12, where="cls = 'park'"))
-    lay.append(zr(style(add("greens"), symbol("polygon", [fill(WOOD)]), "r"), "Woods", 11, where="cls = 'wood'"))
+    lay += by_zoom(add, "greens", "Parks", lambda: symbol("polygon", [fill(PARK)]), (12, 14, 15), where="cls = 'park'")
+    lay += by_zoom(add, "greens", "Woods", lambda: symbol("polygon", [fill(WOOD)]), (11, 13, 14, 15), where="cls = 'wood'")
 
-    # ---- the land and its inked coast, in three bands ----------------------------------------------------------------
+    # ---- the land and its inked coast, in three bands --------------------------------------------------------------
     bands = [("b3", 14, None, None), ("b2", 11, 13, "inner"), ("b2", 11, None, "outer"), ("b1", 8, 10, "inner"), ("b1", 8, None, "outer")]
     q = lambda part: f"part = '{part}'" if part else None
     for b, z0, z1, part in bands:
@@ -122,13 +130,20 @@ def build_map(aprx):
     for b, z0, z1, part in bands:
         lay.append(zr(style(add(f"{b}_wedges"), symbol("polygon", [fill(COBALT, INK_ALPHA)]), "r"), f"Ink wedges {b} {part or ''}".strip(), z0, z1, where=q(part)))
         lay.append(zr(style(add(f"{b}_ink"), symbol("line", [stroke(1.8, COBALT, INK_ALPHA)]), "r"), f"Coast ink {b} {part or ''}".strip(), z0, z1, where=q(part)))
-    for b, z0, z1, part in bands:
-        rings = [3, 7.5] if b == "b1" else [3, 7.5, 12]
-        lay.append(zr(style(add(f"{b}_ripple"), water_lines(rings), "r"), f"Water lines {b} {part or ''}".strip(), z0, z1, where=q(part)))
-    lay.append(zr(style(add("sea"), symbol("polygon", [fill(SEA)]), "r"), "Sea"))
+    for b, z0, z1, part in bands:   # three rings at every band: the atlas also has three from zoom 6
+        lay.append(zr(style(add(f"{b}_ripple"), water_lines([3, 7.5, 12]), "r"), f"Water lines {b} {part or ''}".strip(), z0, z1, where=q(part)))
+    lay.append(zr(style(add("sea"), symbol("polygon", [fill(SEA)]), "r"), "Sea", 8))
 
     for upper, lower in zip(lay, lay[1:]):
         m.moveLayer(upper, lower, "AFTER")
+    return lay
+
+
+def build_map(aprx):
+    m = aprx.createMap("Azulejo Algarve", "MAP")
+    for lyr in m.listLayers(): m.removeLayer(lyr)
+    m.spatialReference = WEB_MERCATOR
+    add_layers(m)
     d = m.getDefinition("V3")   # vector tiles are labelled with the Standard label engine
     d.generalPlacementProperties = cim("CIMStandardGeneralPlacementProperties")
     m.setDefinition(d)

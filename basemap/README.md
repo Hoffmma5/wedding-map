@@ -131,8 +131,25 @@ Large-scale cartography in the Algarve layers:
 
 - **Everything smoothed** like the ink coast: roads, rivers, lakes, beaches, wetlands, parks and woods are simplified
   and their corners rounded (Chaikin). Roads and rivers are split at their junctions first, so junctions stay exact.
-- **Rivers end at the shore** of the lakes and reservoirs they flow through (their centrelines are cut there), and water
-  bodies are drawn above rivers. A river's own mapped bed (water=river) does not cut it.
+- **Rivers flow into lakes, not past them**: water bodies are drawn above rivers (not cut against them), so a lake
+  simply covers the river underneath once it appears — no risk of a permanent gap where a not-yet-visible small pond
+  used to sit. Rivers and lakes share the same colour (a pale body with a soft ink edge), so the water reads as one
+  continuous thing rather than two different-coloured features meeting at a seam.
+- **Roads and rivers read continuous at every zoom**: OSM splits a road or river into many short ways (at every
+  bridge, junction and name change). Short pieces are dropped by the vector tiles at small zooms, which left holes in
+  the motorways. So the smoothed pieces are joined back into long lines ("strokes": at each junction the branch that
+  continues the straightest), e.g. the A22 is one line instead of thousands of ~150 m pieces. At small scales
+  (zoom 8–11) each class is rebuilt as a network: isolated fragments (whole connected networks shorter than a few
+  km) are left out, short loose ends pruned, and a main route that OSM classifies partly as trunk and partly as
+  primary (IP 8, IC 4) is drawn as one. Rivers are taken as whole river systems (names ignored, joined through the
+  smaller reservoirs they run through), so only continuous main stems remain.
+- **Lakes and reservoirs get the coast's ink treatment too**: each shape unioned with a coarser, hand-smoothed copy
+  of itself, the same way the coastline is inked, so their edges wander slightly rather than being a plain outline.
+- **Roads keep full, solid casings** (not a lighter "ink" tint): a transparent casing shows through wherever two
+  OSM ways overlap undissolved (dual carriageways, link roads at a junction), producing an uneven, patchy look.
+  Full opacity paints solid regardless of how many ways overlap there. The motorway colour itself is a muted clay
+  tone rather than a bright "traffic orange", so it still reads as the accent colour without clashing with the rest
+  of the palette.
 - **Size decides the zoom**: lakes and ponds appear at zoom 10 / 12 / 14 / 15 / 16 by area, woods, parks, beaches and
   wetlands likewise; streams only from zoom 15 (short ones from 16, very short ones never); rivers by their total
   length (zoom 8 / 10 / 12).

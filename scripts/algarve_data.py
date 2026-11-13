@@ -10,6 +10,7 @@ with the ink's wobble scaled to the band so it stays subtle at street level.
 """
 import json
 from collections import Counter, defaultdict
+from math import cos, hypot, radians
 import numpy as np
 import shapely
 from pyproj import Transformer
@@ -142,22 +143,176 @@ def smooth_area(p):
 GEN = {"g1": dict(line_tol=500, river_tol=900, water_r=400, water_tol=150), "g2": dict(line_tol=280, river_tol=450, water_r=140, water_tol=60)}
 
 
-def gen_lines(items, keep, tol, group):
-    """merge the lines of each group (road class, river name) into long strokes, simplify them strongly and round the
-    corners again: no meanders and kinks smaller than the scale can show"""
-    groups = defaultdict(list)
-    for g, a in items:
-        if keep(a): groups[tuple(a[k] for k in group)].append(g)
-    out = []
-    for k, gs in groups.items():
-        for l in parts(linemerge(parts(unary_union(gs)))):   # (a list: linemerge refuses a single line)
-            if l.geom_type != "LineString": continue
-            if l.length < tol * 2:   # short pieces between junctions stay (dropping them breaks the road), just unsimplified
-                out.append((l, dict(zip(group, k)))); continue
-            s = l.simplify(tol)
-            s = LineString(chaikin(list(s.coords), 2, closed=False)).simplify(tol * 0.08)
-            out.append((s, dict(zip(group, k))))
+# ---- networks that read continuous: strokes, components, loose ends ---------------------------------------------------
+# A road or a river is mapped as many short OSM ways (split at every bridge, junction, name change). Drawn as they are,
+# short pieces get dropped by the vector tiles at small zooms (holes in a motorway), and filtering pieces by length
+# punches gaps into long routes. These tools rebuild the network as a few long, continuous lines instead.
+SNAP = 0.5
+
+
+def _k(p):
+    return (round(p[0] / SNAP), round(p[1] / SNAP))
+
+
+def noded(lines):
+    """split lines at every intersection, so the network becomes a graph of segments between nodes"""
+    return [l for l in parts(unary_union(list(lines))) if l.geom_type == "LineString" and l.length > 0]
+
+
+def _graph(segs):
+    nodes = defaultdict(list)
+    for i, s in enumerate(segs):
+        nodes[_k(s.coords[0])].append((i, 0))
+        nodes[_k(s.coords[-1])].append((i, 1))
+    return nodes
+
+
+def _dir(seg, end, look):
+    """unit vector from the node into the segment, measured over `look` metres (or half the segment)"""
+    t = min(seg.length * 0.5, look)
+    p0 = seg.coords[0] if end == 0 else seg.coords[-1]
+    p1 = seg.interpolate(t if end == 0 else seg.length - t).coords[0]
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    n = hypot(dx, dy) or 1.0
+    return dx / n, dy / n
+
+
+def strokes(segs, look=50.0, max_turn=60.0):
+    """chain segments into long strokes: at every node the two branches that continue the straightest (turning by at
+    most max_turn degrees) are joined — 'good continuation', so a road or river reads from where to where"""
+    segs = [s for s in segs if s.length > 0]
+    nodes = _graph(segs)
+    limit = -cos(radians(max_turn))
+    link = {}
+    for inc in nodes.values():
+        if len(inc) < 2: continue
+        dirs = [(_dir(segs[i], e, look), (i, e)) for i, e in inc]
+        pairs = []
+        for a in range(len(dirs)):
+            for b in range(a + 1, len(dirs)):
+                (va, ea), (vb, eb) = dirs[a], dirs[b]
+                if ea[0] == eb[0]: continue
+                d = va[0] * vb[0] + va[1] * vb[1]   # -1 = straight on
+                if d <= limit: pairs.append((d, ea, eb))
+        pairs.sort()
+        for d, ea, eb in pairs:
+            if ea in link or eb in link: continue
+            link[ea], link[eb] = eb, ea
+    seen, out = set(), []
+    for i in range(len(segs)):
+        if i in seen: continue
+        cur, e = i, 0                       # walk back to the start of the chain
+        for _ in range(len(segs)):
+            nxt = link.get((cur, e))
+            if nxt is None or nxt[0] == i: break
+            cur, e = nxt[0], 1 - nxt[1]
+        coords, s = [], cur
+        while s not in seen:                # then forward, joining segments end to end
+            seen.add(s)
+            c = list(segs[s].coords)
+            if e == 1: c.reverse()
+            coords.extend(c if not coords else c[1:])
+            nxt = link.get((s, 1 - e))
+            if nxt is None: break
+            s, e = nxt
+        if len(coords) >= 2: out.append(LineString(coords))
     return out
+
+
+def components(segs, gap, connectors=()):
+    """groups of segments connected to each other, bridging gaps up to `gap` metres; connector polygons (reservoirs a
+    river runs into and out of) join what touches them"""
+    geoms = list(segs) + list(connectors)
+    if not geoms: return []
+    parent = list(range(len(geoms)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]; x = parent[x]
+        return x
+    left, right = shapely.STRtree(geoms).query(geoms, predicate="dwithin", distance=gap)
+    for a, b in zip(left, right):
+        ra, rb = find(int(a)), find(int(b))
+        if ra != rb: parent[ra] = rb
+    groups = defaultdict(list)
+    for i in range(len(segs)): groups[find(i)].append(segs[i])
+    return list(groups.values())
+
+
+def footprint_length(segs, gap):
+    """length of the corridor a group of lines covers: a dual carriageway counts once, not twice"""
+    return unary_union(segs).buffer(gap, quad_segs=2).area / (2 * gap)
+
+
+def prune_spurs(segs, min_len, rounds=10):
+    """drop the short loose ends of a network (side streams, stub roads), so the main stems read continuous"""
+    segs = list(segs)
+    for _ in range(rounds):
+        nodes = _graph(segs)
+        drop = set()
+        for inc in nodes.values():
+            if len(inc) != 1: continue
+            (s, e), path, length = inc[0], [], 0.0
+            while True:
+                path.append(s); length += segs[s].length
+                far = _k(segs[s].coords[-1] if e == 0 else segs[s].coords[0])
+                if len(nodes[far]) != 2 or length >= min_len: break
+                nxt = [x for x in nodes[far] if x[0] != s]
+                if not nxt: break
+                s, e = nxt[0]
+            if length < min_len and len(nodes[far]) >= 3:
+                drop.update(path)
+        if not drop: break
+        segs = [s for i, s in enumerate(segs) if i not in drop]
+    return segs
+
+
+def bridge_through(segs, connectors, gap, max_area=None):
+    """lines that end at a reservoir are joined through it (to its centre): at small zooms where the reservoir itself
+    is not drawn, the river runs on instead of stopping at the dam, and its short stretch below the dam is no longer a
+    loose end to be pruned. Reservoirs big enough to be drawn at this zoom (max_area) need no bridge, and a bridge is
+    only made where it stays on the water, never as a straight line across the land of a branching reservoir."""
+    nodes = _graph(segs)
+    ends = [segs[inc[0][0]].coords[0 if inc[0][1] == 0 else -1] for inc in nodes.values() if len(inc) == 1]
+    if not ends or not connectors: return []
+    pts = [Point(p) for p in ends]
+    tree = shapely.STRtree(pts)
+    bridges = []
+    for poly in connectors:
+        if max_area and poly.area > max_area: continue
+        near = tree.query(poly, predicate="dwithin", distance=gap)
+        if len(near) < 2: continue
+        c, water = poly.representative_point().coords[0], poly.buffer(gap)
+        inside = [LineString([ends[i], c]) for i in near]
+        inside = [b for b in inside if b.within(water)]
+        if len(inside) >= 2: bridges += inside
+    return bridges
+
+
+def gen_network(lines, *, tol, gap, min_comp, min_spur=0, connectors=(), max_turn=60, bridge_max_area=None):
+    """a continuous small-scale version of a network: whole connected networks shorter than min_comp are left out
+    (isolated fragments), short loose ends are pruned, the rest is chained into long strokes, simplified, rounded"""
+    segs = noded(lines)
+    kept = []
+    for comp in components(segs, gap, connectors):
+        if footprint_length(comp, gap) >= min_comp:
+            kept += comp
+    kept += bridge_through(kept, connectors, gap, bridge_max_area)
+    if min_spur: kept = prune_spurs(kept, min_spur)
+    out = []
+    for st in strokes(kept, look=tol, max_turn=max_turn):
+        if st.length < tol: continue
+        s = st.simplify(tol)
+        out.append(LineString(chaikin(list(s.coords), 2, closed=False)).simplify(tol * 0.08))
+    return out
+
+
+def merge_by_attrs(items, look=20.0, max_turn=45):
+    """join smoothed pieces that share all attributes back into long lines (through junctions where they continue
+    straight): tiny pieces would otherwise be dropped by the vector tiles, leaving holes in roads and rivers"""
+    groups = defaultdict(list)
+    for g, a in items: groups[tuple(a.items())].append(g)
+    return [(st, dict(k)) for k, gs in groups.items() for st in strokes(gs, look=look, max_turn=max_turn)]
 
 
 def gen_water(polys, r, tol):
@@ -214,6 +369,21 @@ def soft(poly, tol, iterations=2, thin=0.3):
         q = Polygon(chaikin(list(p.exterior.coords), iterations, True), [chaikin(list(i.coords), iterations, True) for i in p.interiors]).buffer(0)
         out.append(q.simplify(tol * thin, preserve_topology=True))
     return unary_union(out)
+
+
+def ink_pieces(items, tol, min_wedge=4):
+    """the coast's ink technique applied to arbitrary water polygons: each shape unioned with a coarser smoothed
+    copy of itself (the "hand", wandering slightly off the true edge) -> (wedges where the hand strays outside,
+    the ink outline as a line). Gives lakes/reservoirs the same artistic edge as the coastline, not a plain outline."""
+    wedges, inks = [], []
+    for g, a in items:
+        loose = soft(g, tol, iterations=2, thin=0.3)
+        inked = unary_union([g, loose])
+        for p in parts(inked.difference(g)):
+            if p.geom_type == "Polygon" and p.area > min_wedge:
+                wedges.append((p, a))
+        inks.append((inked.boundary, a))
+    return wedges, inks
 
 
 def ink_band(land, tol, ink_tol, min_area):
@@ -277,11 +447,26 @@ def roads():
         for p in parts(g):
             if p.geom_type == "LineString":
                 items.append((p, {"cls": "motorway", "min_zoom": 8, "label": "", "ref": el.get("tags", {}).get("ref") or ""}))
-    save("roads", smooth_lines(items), "line")
-    save("roads_g1", gen_lines(items, lambda a: a["min_zoom"] <= 9, GEN["g1"]["line_tol"], ("cls",)), "line")
-    save("roads_g2", gen_lines(items, lambda a: a["min_zoom"] <= 11 and a["cls"] != "minor", GEN["g2"]["line_tol"], ("cls",)), "line")
+    save("roads", merge_by_attrs(smooth_lines(items)), "line")
+    # small scales: per class, a continuous network (main carriageways only, no ramps), isolated fragments left out
+    SMALL = {   # name: {class: (min_zoom included up to, gap bridged, min network length, min loose end)}
+        "g1": {"motorway": (8, 300, 40_000, 5_000), "primary": (9, 150, 12_000, 2_000)},
+        "g2": {"motorway": (8, 150, 15_000, 2_000), "primary": (9, 80, 5_000, 800),
+               "secondary": (10, 60, 4_000, 600), "tertiary": (11, 50, 3_000, 500)},
+    }
+    # a main route (IP 8 Sines–Beja, IC 4…) is mapped partly as trunk and partly as primary: at small scales the
+    # whole route is drawn as one, so it reads continuous instead of as dashes (European E-refs are too broad for this)
+    tokens = lambda a: {r.strip() for r in a.get("ref", "").split(";") if r.strip() and not r.strip().startswith("E")}
+    main_refs = set().union(*(tokens(a) for _, a in items if a["cls"] == "motorway" and a["min_zoom"] == 8))
+    same_route = lambda a: a["cls"] == "primary" and tokens(a) & main_refs
+    for name, classes in SMALL.items():
+        out = []
+        for cls, (maxz, gap, min_comp, min_spur) in classes.items():
+            lines = [g for g, a in items if (a["cls"] == cls and a["min_zoom"] <= maxz) or (cls == "motorway" and same_route(a))]
+            out += [(g, {"cls": cls}) for g in gen_network(lines, tol=GEN[name]["line_tol"], gap=gap, min_comp=min_comp, min_spur=min_spur)]
+        save(f"roads_{name}", out, "line")
     rails = [(p, {"label": ""}) for el in load("railways") for l in [way_line(el)] if l for p in parts(merc(l).intersection(DETAIL)) if p.geom_type == "LineString"]
-    save("railways", smooth_lines(rails, tol=5.0), "line")
+    save("railways", merge_by_attrs(smooth_lines(rails, tol=5.0)), "line")
 
 
 PLACE_ZOOM = {"city": 8, "town": 9, "village": 11, "suburb": 13, "hamlet": 13, "neighbourhood": 15, "locality": 15, "island": 12}
@@ -320,12 +505,17 @@ def places():
     save("peaks", peaks, "point")
 
 
-def areas(src, attrs_of, min_area, frame=DETAIL):
+def areas(src, attrs_of, min_area, frame=DETAIL, clip=None):
+    """clip: an extra geometry (e.g. the land polygon) each feature is also intersected with, so a feature that
+    OSM maps slightly past the coast (common for protected-area polygons) never paints over the sea"""
     items = []
     for el in load(src):
         g = area_geom(el)
         if g is None or g.is_empty: continue
         g = merc(g).intersection(frame)
+        if clip is not None:
+            g = g.intersection(clip)
+            if g.is_empty: continue
         a = attrs_of(el.get("tags", {}), g)
         if a is None: continue
         for p in parts(g):
@@ -345,7 +535,7 @@ WOOD_ZOOM = [(3e6, 11), (3e5, 13), (5e4, 14), (0, 15)]
 PARK_ZOOM = [(2e5, 12), (2e4, 14), (0, 15)]
 
 
-def water_and_land_cover(land3):
+def water_and_land_cover(land):
     RIVER_BED = ("river", "canal", "stream", "oxbow", "rapids")
     water = areas("water", lambda t, g: {"label": t.get("name") or "", "kind": "river" if t.get("water") in RIVER_BED else "lake",
                                          "zoom_of": lambda a: by_area(a, WATER_ZOOM)}, 500)
@@ -363,33 +553,38 @@ def water_and_land_cover(land3):
         if t.get("leisure") == "golf_course": return {"cls": "golf", "label": t.get("name") or "", "min_zoom": 11}
         if t.get("leisure") in ("park", "nature_reserve"): return {"cls": "park", "label": t.get("name") or "", "zoom_of": lambda a: by_area(a, PARK_ZOOM)}
         return {"cls": "wood", "label": t.get("name") or "", "zoom_of": lambda a: by_area(a, WOOD_ZOOM)}
-    save("greens", areas("greens", green_attrs, 2000), "polygon")
+    # clipped to the land polygon: a nature reserve / wood polygon that OSM maps slightly past the coast must not paint over the sea
+    save("greens", areas("greens", green_attrs, 2000, clip=land), "polygon")
 
     # rivers and streams: cut where they run through a lake or reservoir (the water body is drawn instead), smoothed;
     # rivers appear by their total length, streams only close in, very short ones not at all
-    lakes = [g for g, a in water if a["kind"] == "lake"]   # not the river's own bed (water=river), or the river would break up
     water_g = {}
     for name, maxz in (("g1", 9), ("g2", 11)):
         water_g[name] = gen_water([g for g, a in water if a["min_zoom"] <= maxz], GEN[name]["water_r"], GEN[name]["water_tol"])
         save(f"water_{name}", water_g[name], "polygon")
-    tree = shapely.STRtree(lakes)
+    # the coast's hand-inked edge, also for lakes/reservoirs: wobble scaled like the land bands (g1 ~ b1, g2 ~ b2,
+    # full detail ~ b3), so a lake's edge wanders the same artistic amount as the coastline does at that same zoom
+    WATER_INK_TOL = {"g1": 320, "g2": 90, "full": 14}
+    for name in ("g1", "g2"):
+        wd, ik = ink_pieces(water_g[name], WATER_INK_TOL[name])
+        save(f"water_{name}_wedges", wd, "polygon")
+        save(f"water_{name}_ink", ik, "line")
+    wd, ik = ink_pieces(water, WATER_INK_TOL["full"])
+    save("water_wedges", wd, "polygon")
+    save("water_ink", ik, "line")
+    # rivers are NOT cut at lakes/reservoirs: a lake's own min_zoom can be higher than the river's, so cutting the
+    # river unconditionally left a permanent gap wherever a not-yet-visible pond happened to sit (a real bug seen in
+    # practice). Water bodies are drawn above rivers in algarve_pro.py, so once a lake becomes visible it simply
+    # covers the river underneath it — no cutting needed, and no risk of a gap with nothing to fill it.
     lines = []
     for el in load("waterways"):
         t = el.get("tags", {}); l = way_line(el)
         if l is None: continue
         ww = t.get("waterway")
         for p in parts(merc(l).intersection(DETAIL)):
-            if p.geom_type != "LineString": continue
-            hits = [lakes[i] for i in tree.query(p, predicate="intersects")]
-            if hits: p = p.difference(unary_union(hits))
-            for q in parts(p):
-                if q.geom_type == "LineString" and q.length > 30:
-                    lines.append((q, {"cls": "river" if ww == "river" else "stream", "label": t.get("name") or "", "min_zoom": 0}))
-    raw_rivers = []   # uncut, for the small-scale versions (cut by the generalized lakes instead)
-    for el in load("waterways"):
-        t = el.get("tags", {}); l = way_line(el)
-        if l is None or t.get("waterway") != "river": continue
-        raw_rivers += [(p, {"cls": "river", "label": t.get("name") or ""}) for p in parts(merc(l).intersection(DETAIL)) if p.geom_type == "LineString"]
+            if p.geom_type == "LineString" and p.length > 30:
+                lines.append((p, {"cls": "river" if ww == "river" else "stream", "label": t.get("name") or "", "min_zoom": 0}))
+    raw_rivers = [(g, a) for g, a in lines if a["cls"] == "river"]   # for the small-scale (generalized) versions
     total = defaultdict(float)
     for g, a in lines:
         if a["cls"] == "river" and a["label"]: total[a["label"]] += g.length
@@ -400,13 +595,15 @@ def water_and_land_cover(land3):
         else:
             a["min_zoom"] = 15 if g.length > 600 else 16
     lines = [(g, a) for g, a in lines if not (a["cls"] == "stream" and g.length < 150)]
-    save("waterways", smooth_lines(lines), "line")
-    for name, maxz in (("g1", 8), ("g2", 10)):
-        keep_names = {n for n, length in total.items() if (8 if length > 40e3 else 10 if length > 10e3 else 12) <= maxz}
-        rivers = gen_lines(raw_rivers, lambda a: a["label"] in keep_names, GEN[name]["river_tol"], ("cls", "label"))
-        lakes_g = unary_union([g for g, _ in water_g[name]])
-        cut = [(q, a) for g, a in rivers for q in parts(g.difference(lakes_g)) if q.geom_type == "LineString" and q.length > 200]
-        save(f"waterways_{name}", cut, "line")
+    save("waterways", merge_by_attrs(smooth_lines(lines)), "line")
+    # small scales: whole river systems (names ignored: a river often changes name along its course), joined through
+    # the reservoirs they run into, short side streams pruned, so only continuous main stems remain
+    lakes = [g for g, a in water if a["kind"] == "lake" and g.area > 5e5]
+    # bridge_max_area: reservoirs drawn at that zoom (WATER_ZOOM: zoom 8 from 15 km², zoom 10 from 2 km²) cover the gap
+    for name, gap, min_comp, min_spur, drawn in (("g1", 200, 60_000, 25_000, 1.5e7), ("g2", 100, 20_000, 8_000, 2e6)):
+        rivers = gen_network([g for g, _ in raw_rivers], tol=GEN[name]["river_tol"], gap=gap, min_comp=min_comp,
+                             min_spur=min_spur, connectors=lakes, max_turn=70, bridge_max_area=drawn)
+        save(f"waterways_{name}", [(g, {"cls": "river", "label": ""}) for g in rivers], "line")
 
 
 if __name__ == "__main__":

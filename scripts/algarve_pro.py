@@ -26,7 +26,7 @@ VTPK = OUT / "Azulejo_Algarve.vtpk"
 arcpy.env.overwriteOutput = True
 
 SAND, GOLF, PARK, WOOD, TIDAL = (243, 229, 199), (221, 229, 196), (228, 234, 210), (232, 236, 216), (214, 228, 222)
-TERRA, WHITE, OLIVE = (226, 160, 112), (255, 255, 255), (127, 143, 95)
+TERRA, WHITE, OLIVE = (199, 142, 106), (255, 255, 255), (127, 143, 95)   # TERRA: muted clay, less "traffic orange"
 
 
 def zr(lyr, name, z_from=None, z_to=None, where=None):
@@ -51,6 +51,15 @@ def build_gdb():
 def road(fill_rgb, fill_px, case_px, case_alpha):
     """a road: fill over a slightly wider cobalt casing (no casing at the smallest scales)"""
     return symbol("line", [stroke(fill_px, fill_rgb)] + ([stroke(case_px, COBALT, case_alpha)] if case_px else []))
+
+
+def water_ribbon(width, edge=1.0, edge_alpha=INK_ALPHA):
+    """a river drawn the same way as a lake (pale SEA body, cobalt ink edge) instead of a solid cobalt line, so the
+    colour reads as the same water flowing from the river into the lake rather than two different features.
+    edge_alpha defaults to the same high opacity as the coast/lake ink: at a low alpha, two overlapping edges at a
+    confluence (two separate OSM ways meeting, not one dissolved line) compound into a visibly darker "knot";
+    at high alpha the compounding is barely perceptible, the same fix that solved it for road casings."""
+    return symbol("line", [stroke(width + edge * 2, COBALT, edge_alpha), stroke(width, SEA)])
 
 
 def water_lines(rings):
@@ -92,7 +101,9 @@ def add_layers(m):
                   where="label <> '' AND cls = 'river'"))
 
     # ---- roads (motorway on top) and railways --------------------------------------------------------------------
-    widths = {   # class: [(z_from, z_to, fill px, casing px, casing alpha)]
+    widths = {   # class: [(z_from, z_to, fill px, casing px, casing alpha)] — back to full opacity: at reduced
+        # alpha, non-dissolved OSM ways (dual carriageways, segments meeting at junctions) show as uneven double-
+        # dark patches where they overlap, and other data shows through; full opacity paints solid, no seam.
         "motorway": [(8, 10, 1.5, 0, 0), (11, 13, 2.8, 4.2, 75), (14, 14, 5.5, 7.5, 80), (15, None, 9.0, 11.5, 85)],
         "primary": [(9, 10, 1.0, 1.9, 45), (11, 13, 2.0, 3.2, 50), (14, 14, 4.6, 6.2, 55), (15, None, 8.0, 10.2, 60)],
         "secondary": [(10, 11, 0.9, 1.7, 40), (12, 13, 1.7, 2.8, 45), (14, 14, 4.0, 5.4, 50), (15, None, 7.0, 9.0, 55)],
@@ -114,16 +125,31 @@ def add_layers(m):
     lay.append(zr(style(add("railways"), symbol("line", [dashed(stroke(0.8, CREAM), (3, 3)), stroke(1.8, INK, 70)]), "r"), "Railways", 10))
 
     # ---- water bodies above the rivers: a river ends at the shore of the lake it flows into ------------------------
-    # small scales: generalized lakes without outline; closer in the full shapes with a soft outline
-    soft_water = lambda: symbol("polygon", [stroke(0.6, COBALT, 35), fill(SEA)])
-    lay.append(zr(style(add("water_g1"), symbol("polygon", [fill(SEA)]), "r"), "Lakes & reservoirs (z8-9)", 8, 9))
-    lay.append(zr(style(add("water_g2"), symbol("polygon", [fill(SEA)]), "r"), "Lakes & reservoirs (z10-11)", 10, 11))
-    lay.append(zr(style(add("water"), soft_water(), "r"), "Lakes & reservoirs (z12)", 12, where="min_zoom <= 12"))
-    lay += by_zoom(add, "water", "Lakes & reservoirs", soft_water, (14, 15, 16))
-    lay.append(zr(style(add("waterways_g1"), symbol("line", [stroke(1.3, COBALT, INK_ALPHA)]), "r"), "Rivers (z8-9)", 8, 9))
-    lay.append(zr(style(add("waterways_g2"), symbol("line", [stroke(1.15, COBALT, INK_ALPHA)]), "r"), "Rivers (z10-11)", 10, 11))
-    lay.append(zr(style(add("waterways"), symbol("line", [stroke(1.0, COBALT, INK_ALPHA)]), "r"), "Rivers (z12+)", 12, where="cls = 'river' AND min_zoom <= 12"))
-    lay += by_zoom(add, "waterways", "Streams", lambda: symbol("line", [stroke(0.7, COBALT, 70)]), (15, 16), where="cls = 'stream'")
+    # same three-layer technique as the coast (fill, then the wedges where the hand strays outside, then the ink
+    # outline on top), so a lake's edge wanders like a hand-drawn line instead of a plain smooth outline
+    water_fill = lambda: symbol("polygon", [fill(SEA)])
+    wedge_sym = lambda: symbol("polygon", [fill(COBALT, INK_ALPHA)])
+    ink_sym = lambda w=1.0: symbol("line", [stroke(w, COBALT, INK_ALPHA)])
+    lay.append(zr(style(add("water_g1"), water_fill(), "r"), "Lakes & reservoirs fill (z8-9)", 8, 9))
+    lay.append(zr(style(add("water_g2"), water_fill(), "r"), "Lakes & reservoirs fill (z10-11)", 10, 11))
+    lay.append(zr(style(add("water"), water_fill(), "r"), "Lakes & reservoirs fill (z12)", 12, where="min_zoom <= 12"))
+    lay += by_zoom(add, "water", "Lakes & reservoirs fill", water_fill, (14, 15, 16))
+    # the ink wedges + outline are appended AFTER the fills (same relative order land/coast uses), which puts them
+    # visually on top of the fill once the stacking pass below runs
+    lay.append(zr(style(add("water_g1_wedges"), wedge_sym(), "r"), "Lake ink wedges (z8-9)", 8, 9))
+    lay.append(zr(style(add("water_g1_ink"), ink_sym(1.4), "r"), "Lake ink (z8-9)", 8, 9))
+    lay.append(zr(style(add("water_g2_wedges"), wedge_sym(), "r"), "Lake ink wedges (z10-11)", 10, 11))
+    lay.append(zr(style(add("water_g2_ink"), ink_sym(1.2), "r"), "Lake ink (z10-11)", 10, 11))
+    lay.append(zr(style(add("water_wedges"), wedge_sym(), "r"), "Lake ink wedges (z12)", 12, where="min_zoom <= 12"))
+    lay.append(zr(style(add("water_ink"), ink_sym(1.0), "r"), "Lake ink (z12)", 12, where="min_zoom <= 12"))
+    lay += by_zoom(add, "water_wedges", "Lake ink wedges", wedge_sym, (14, 15, 16))
+    lay += by_zoom(add, "water_ink", "Lake ink", lambda: ink_sym(0.9), (14, 15, 16))
+    # much lighter at small scale, where a river is background context, not the subject — at z8-9 the old
+    # width+alpha made rivers visually louder than roads, towns or anything else and dominated the map
+    lay.append(zr(style(add("waterways_g1"), water_ribbon(0.45, edge=0.35, edge_alpha=55), "r"), "Rivers (z8-9)", 8, 9))
+    lay.append(zr(style(add("waterways_g2"), water_ribbon(0.6, edge=0.4, edge_alpha=60), "r"), "Rivers (z10-11)", 10, 11))
+    lay.append(zr(style(add("waterways"), water_ribbon(0.55, edge=0.4, edge_alpha=62), "r"), "Rivers (z12+)", 12, where="cls = 'river' AND min_zoom <= 12"))
+    lay += by_zoom(add, "waterways", "Streams", lambda: water_ribbon(0.6, edge=0.5, edge_alpha=60), (15, 16), where="cls = 'stream'")
 
     # ---- land cover on the land ------------------------------------------------------------------------------------
     lay += by_zoom(add, "wetlands", "Tidal flats & marsh", lambda: symbol("polygon", [fill(TIDAL)]), (10, 12, 14, 15))

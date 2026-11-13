@@ -85,3 +85,31 @@ on the map again (or rerun the script).
 - **Water lines by scale**: 1 ring at zoom 0–3, 2 rings at zoom 4–5, 3 rings from zoom 6.
 - Not included (they are not vector data): the cobalt hillshade relief and the animated ocean currents of the
   web map. The relief could be added as a separate hillshade tile layer.
+
+## Azulejo Algarve (large scale)
+
+A third package for maps around the venue: **`Azulejo_Algarve.vtpk`**, web zoom 8 (1:2.3M) down to 17 (1:4.5k,
+street level; vector tiles overzoom sharply beyond). Same style, from OpenStreetMap data.
+
+```bash
+curl -L -o data-raw/pbf/portugal-latest.osm.pbf https://download.geofabrik.de/europe/portugal-latest.osm.pbf
+python scripts/algarve_pbf.py      # filters the Algarve out of the extract (+ one small Overpass query for the Spanish bank)
+python scripts/algarve_data.py     # land, inked coast in three zoom bands, roads, water, beaches, greens, places
+"C:\Program Files\ArcGIS\Pro\bin\Python\envs\arcgispro-py3\python.exe" scripts\algarve_pro.py --vtpk
+```
+
+`scripts/algarve_fetch.py` gets the coastline and the context motorways (south Portugal, Andalusia, north Morocco)
+from Overpass, tile by tile, and can fetch everything else too when Overpass is not overloaded.
+
+- **Coast**: land is built from the OSM coastline (land lies left of it) and generalized in three bands: zoom 8–10
+  (~250 m, whole context), 11–13 (~40 m, around the Algarve), 14+ (~6 m, the Algarve). Each band keeps showing
+  outside the next band's frame, so panning away at a large zoom never shows an empty sea. The inked copy wobbles by
+  700 / 140 / 12 m, so the hand-drawn look stays subtle at street level. Ink and water lines are lines (the coast),
+  not polygon outlines, so the band frames never show.
+- **Roads**: motorways in terracotta, the rest white with fine cobalt casings, appearing by class
+  (motorway 8, primary 9, secondary 10, tertiary 11, minor 13) and widening in steps at zoom 11, 14 and 15.
+- **Land cover**: beaches in sand, golf courses, parks and woods in soft sages, tidal flats and marsh, reservoirs.
+- **Labels** (Instrument Serif): towns and cities in spaced cobalt capitals, villages, hamlets and neighbourhoods
+  in ink, road names from zoom 13, street names from 15, river names in italics, peaks with their height.
+- **Credits**: *© OpenStreetMap contributors (ODbL); Natural Earth*. OpenStreetMap data is open under the ODbL: keep
+  the attribution on any map using this basemap.
